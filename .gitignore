@@ -1,0 +1,147 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# =========================
+# Environment / Secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+*.pem
+*.key
+secrets/
+credentials/
+service-account*.json
+
+# =========================
+# Node / React / Vite
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+dist/
+.vite/
+.turbo/
+.cache/
+
+# =========================
+# IDE / Editors
+# =========================
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+.idea/
+*.iml
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# SQLite / Local Database
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+# Keep database directory structure
+!database/.gitkeep
+
+# =========================
+# Receipts Runtime Data
+# =========================
+runtime/
+tmp/
+temp/
+workspaces/
+sandboxes/
+checkouts/
+snapshots/
+
+# Generated evidence / execution artifacts
+artifacts/
+execution_logs/
+agent_logs/
+
+# =========================
+# Uploaded / Generated Files
+# =========================
+uploads/
+generated/
+reports/
+
+# =========================
+# Test / Coverage Artifacts
+# =========================
+.pytest_cache/
+htmlcov/
+.coverage
+coverage/
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+
+# =========================
+# Local Replay Data
+# =========================
+replay_runs/
+replay_output/
+
+# =========================
+# Bob Local Runtime / State
+# =========================
+.bob/cache/
+.bob/logs/
+.bob/runtime/
+.bob/state/
+
+# Keep project Bob configuration/instructions tracked
+!.bob/mcp.json
+!.bob/*.md
+!.bob/*.json
+
+# =========================
+# Generated Frontend Files
+# =========================
+*.local
+
+# =========================
+# Backup / Temporary Files
+# =========================
+*.bak
+*.tmp
+*.swp
+*~
