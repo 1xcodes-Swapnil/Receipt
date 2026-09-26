@@ -79,6 +79,14 @@ class ImmunityContext:
     def set_stage(self, stage_type: str, evidence: dict):
         self.stage_evidence[stage_type] = evidence
 
+    def _replace_workspace(self, new_path: str) -> None:
+        """
+        Replace the repository_path with a fresh workspace.
+        Used by the orchestrator fix-retry loop to ensure each fix
+        candidate starts from a clean, unmodified state.
+        """
+        self.repository_path = new_path
+
 
 # ---------------------------------------------------------------------------
 # Helper: run a subprocess with timeout, capture output

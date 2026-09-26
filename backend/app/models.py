@@ -544,6 +544,11 @@ class ReplayResult(Base):
     """
     Result of running the Receipts review pipeline on a replay case.
     Stores the actual verdict, evidence summary, and scoring breakdown.
+
+    Phase 8 additions:
+      planner_trace_json  — JSON list of StrategyTraceEntry dicts captured from the run
+      strategies_used     — comma-separated strategy names actually executed
+      strategy_count      — number of strategies executed
     """
     __tablename__ = "replay_result"
 
@@ -565,6 +570,10 @@ class ReplayResult(Base):
     # Raw output summary
     output: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Phase 8: planner/strategy trace metadata
+    planner_trace_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategies_used: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    strategy_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     replay_case: Mapped["ReplayCase"] = relationship(back_populates="results")

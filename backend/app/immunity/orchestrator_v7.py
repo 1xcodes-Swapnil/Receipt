@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import os.path
 import shutil
 import tempfile
 import uuid
@@ -73,6 +74,7 @@ EVT_IMMUNITY_ESCALATED = "immunity_escalated"
 EVT_IMMUNITY_FAILED    = "immunity_failed"
 EVT_FIX_RETRY          = "immunity_fix_retry"
 EVT_ROLLBACK           = "immunity_rollback"
+EVT_WORKSPACE_REFRESH  = "immunity_workspace_refresh"
 
 # Max fix+verify retry cycles
 MAX_FIX_RETRIES = 3
@@ -139,7 +141,11 @@ class ImmunityOrchestratorV7:
                 repository_path=workspace_path,
                 source_receipt={"receipt_ids": source_receipt_ids or []},
             )
-            final_pipeline_state = self._execute_pipeline(db, pipeline, psm, context)
+            # Store original source path for fresh-workspace fix retries
+            context.stage_evidence["_source_repository_path"] = repository_path
+            final_pipeline_state = self._execute_pipeline(
+                db, pipeline, psm, context, original_source=repository_path
+            )
         except Exception as exc:
             logger.exception("p7-immunity: pipeline %s raised unexpected exception", pipeline.id)
             try:
@@ -183,10 +189,14 @@ class ImmunityOrchestratorV7:
         pipeline: ImmunityPipeline,
         psm: PipelineStateMachine,
         context: ImmunityContext,
+        original_source: str = "",
     ) -> PipelineState:
         """
         Execute each stage in order with state machine enforcement.
         Returns final PipelineState.
+
+        Fix retry loop creates a FRESH workspace from original_source each attempt
+        so a failed/partial fix never contaminates subsequent fix candidates.
         """
 
         # ── Stage 1: Reproduce ──────────────────────────────────────────────
@@ -216,12 +226,41 @@ class ImmunityOrchestratorV7:
         # ── Stage 3+4+5: Fix → Verify → Regression (with retry) ────────────
         psm.transition(PipelineState.FIXING, "Root cause verified — starting fix", db=db)
 
+        # Preserve reproduce + root cause evidence for fresh workspace contexts
+        reproduce_evidence = context.get_stage(StageTypeEnum.REPRODUCE)
+        root_cause_evidence = context.get_stage(StageTypeEnum.ROOT_CAUSE)
+        attempted_strategies: list[str] = []
+
         fix_attempts = 0
         while fix_attempts < MAX_FIX_RETRIES:
             fix_attempts += 1
             self._update_pipeline_stage(db, pipeline, StageTypeEnum.FIX)
 
+            # Create a FRESH workspace for this fix attempt so prior failed
+            # candidates cannot contaminate this attempt's code.
+            if fix_attempts > 1 and original_source and os.path.isdir(original_source):
+                fresh_ws = self._create_workspace(original_source)
+                logger.info(
+                    "p7-immunity: fresh workspace %s for fix attempt %d (pipeline %s)",
+                    fresh_ws, fix_attempts, pipeline.id,
+                )
+                audit.record_event(
+                    db, EVT_WORKSPACE_REFRESH,
+                    review_run_id=pipeline.review_run_id,
+                    payload={"pipeline_id": pipeline.id, "attempt": fix_attempts,
+                             "workspace": fresh_ws},
+                )
+                # Update context to use new workspace
+                context._replace_workspace(fresh_ws)
+
+            # Pass accumulated attempted strategies into context so planner skips them
+            context.stage_evidence["_attempted_fix_strategies"] = list(attempted_strategies)
+
             fix_result = self._run_stage(db, pipeline, context, FixStageV7())
+            # Track which strategy was attempted
+            fix_ev = context.get_stage(StageTypeEnum.FIX) or {}
+            if fix_ev.get("strategy"):
+                attempted_strategies.append(fix_ev["strategy"])
 
             if fix_result.status == ImmunityStatusEnum.BLOCKED:
                 return self._terminal(psm, PipelineState.BLOCKED, "No applicable fix strategy", db,

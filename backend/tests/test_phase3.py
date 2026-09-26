@@ -281,7 +281,8 @@ class TestImmunityOrchestrator:
         data = resp.json()
         assert "id" in data
         assert data["review_run_id"] == run["id"]
-        assert data["status"] in ("passed", "failed", "blocked")
+        # Phase 8: V7 adds 'escalated' as a valid terminal state
+        assert data["status"] in ("passed", "failed", "blocked", "escalated")
 
     def test_pipeline_has_stages(self, client, pipeline_id_fixture):
         resp = client.get(f"/immunity/{pipeline_id_fixture}/stages")
@@ -305,13 +306,17 @@ class TestImmunityOrchestrator:
         assert resp.status_code == 404
 
     def test_pipeline_status_never_safe_from_error(self, client, setup_db):
-        """Agent failure cannot produce PASSED status."""
+        """Agent failure cannot produce an invalid status.
+        Phase 8: ImmunityOrchestrator is now V7 — adds 'escalated' as valid terminal state.
+        """
         run = create_demo_review(client)
         resp = client.post(f"/reviews/{run['id']}/immunity", json={})
         assert resp.status_code == 201
         data = resp.json()
-        # Status must be one of the valid enum values
-        assert data["status"] in ("passed", "failed", "blocked", "running", "pending")
+        # Status must be one of the valid enum values (V7 adds 'escalated')
+        assert data["status"] in (
+            "passed", "failed", "blocked", "running", "pending", "escalated"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +416,14 @@ class TestImmunityAudit:
         )
         event_types = [e.event_type for e in events]
         assert "immunity_started" in event_types
-        assert "immunity_completed" in event_types or "immunity_failed" in event_types
+        # Phase 8: V7 emits immunity_complete / immunity_blocked / immunity_escalated / immunity_failed
+        _terminal_events = {
+            "immunity_completed", "immunity_failed", "immunity_complete",
+            "immunity_blocked", "immunity_escalated",
+        }
+        assert any(et in _terminal_events for et in event_types), (
+            f"No terminal immunity event found in: {event_types}"
+        )
 
     def test_audit_hash_chain_integrity(self, client, setup_db, db_session):
         """
@@ -477,7 +489,8 @@ class TestImmunityEndToEnd:
         )
         assert imm_resp.status_code == 201
         pipeline = imm_resp.json()
-        assert pipeline["status"] in ("passed", "failed", "blocked")
+        # Phase 8: V7 adds 'escalated' as a valid terminal state
+        assert pipeline["status"] in ("passed", "failed", "blocked", "escalated")
 
         # 3. Get pipeline detail
         detail_resp = client.get(f"/immunity/{pipeline['id']}")
@@ -488,11 +501,15 @@ class TestImmunityEndToEnd:
         assert len(detail["stages"]) > 0
 
         for stage in detail["stages"]:
+            # Phase 8: V7 adds 'pattern' stage type
             assert stage["stage_type"] in (
                 "reproduce", "root_cause", "fix", "verify",
-                "regression_test", "sibling_hunt", "documentation"
+                "regression_test", "sibling_hunt", "documentation", "pattern"
             )
-            assert stage["status"] in ("passed", "failed", "blocked", "pending", "running")
+            # Phase 8: V7 adds 'escalated' stage status
+            assert stage["status"] in (
+                "passed", "failed", "blocked", "pending", "running", "escalated"
+            )
 
         # 4. Stages endpoint
         stages_resp = client.get(f"/immunity/{pipeline['id']}/stages")

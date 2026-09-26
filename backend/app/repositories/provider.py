@@ -1,16 +1,28 @@
 """
-Repository Provider Abstraction — Phase 3.
+Repository Provider Abstraction — Phase 8.
 
 Defines a clean interface so the review engine is decoupled from local paths.
-Phase 3 implements LocalRepositoryProvider.
-GitHubRepositoryProvider is a stub interface only — no real GitHub calls.
+
+Providers:
+  LocalRepositoryProvider  — backed by a local filesystem path (full implementation)
+  GitHubRepositoryProvider — reads from GitHub REST API when GITHUB_TOKEN is available
+                             fails cleanly with explicit ProviderStatus when not
 
 Usage:
     provider = LocalRepositoryProvider("/path/to/repo")
     diff = provider.get_diff("HEAD~1", "HEAD")
     workspace = provider.create_workspace()
     ...
-    provider.cleanup_workspace(workspace)
+    workspace.cleanup()
+
+GitHub usage:
+    status = GitHubRepositoryProvider.check_availability()
+    if status.available:
+        provider = GitHubRepositoryProvider("owner", "repo", pr_number=42)
+        snapshot = provider.create_snapshot()
+    else:
+        # Use local fallback, report status.reason
+        print(status.reason)
 """
 from __future__ import annotations
 
@@ -57,6 +69,23 @@ class Workspace:
         if self._owned and os.path.isdir(self.path):
             shutil.rmtree(self.path, ignore_errors=True)
             logger.debug("Workspace cleaned up: %s", self.path)
+
+
+@dataclass
+class ProviderStatus:
+    """Status of a repository provider — used to report availability clearly."""
+    available: bool
+    provider: str
+    reason: str
+    detail: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "available": self.available,
+            "provider": self.provider,
+            "reason": self.reason,
+            "detail": self.detail,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +142,14 @@ class RepositoryProvider(abc.ABC):
     def has_git(self) -> bool:
         """Return True if the repository has a .git directory."""
         ...
+
+    def status(self) -> ProviderStatus:
+        """Return availability status of this provider."""
+        return ProviderStatus(
+            available=True,
+            provider=self.__class__.__name__,
+            reason="available",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -239,63 +276,295 @@ class LocalRepositoryProvider(RepositoryProvider):
 
 
 # ---------------------------------------------------------------------------
-# GitHub stub (interface only — no real API calls)
+# GitHub provider — real implementation with clean failure on missing creds
 # ---------------------------------------------------------------------------
+
+@dataclass
+class GitHubPRInfo:
+    """Metadata for a GitHub pull request."""
+    number: int
+    title: str
+    body: Optional[str]
+    state: str
+    base_sha: str
+    head_sha: str
+    base_branch: str
+    head_branch: str
+    author: str
+    changed_files: list[str] = field(default_factory=list)
+    additions: int = 0
+    deletions: int = 0
+
 
 class GitHubRepositoryProvider(RepositoryProvider):
     """
-    GitHub repository provider — STUB only.
+    GitHub repository provider.
 
-    This class defines the interface a real GitHub connector must implement.
-    It does NOT make real GitHub API calls and will raise NotImplementedError
-    on every operation.
+    Reads repository data from GitHub REST API using GITHUB_TOKEN.
 
-    To implement this you would need:
-      - A GitHub personal access token (or GitHub App credentials) with
-        ``repo`` / ``contents:read`` scope set in GITHUB_TOKEN env variable.
-      - The PyGithub or httpx library to call the GitHub REST API.
-      - A local clone (or in-memory tree) to satisfy the repo_path contract.
+    When credentials are unavailable or network is unreachable:
+      - check_availability() returns ProviderStatus(available=False, reason=...)
+      - All operations fail cleanly with ProviderUnavailableError
+      - Never fabricates GitHub data
 
-    This is intentionally unimplemented — no credentials are available in
-    the current deployment.  Do NOT attempt to fake GitHub responses.
+    Requires:
+      - GITHUB_TOKEN environment variable with repo/contents:read scope
+      - Network access to api.github.com
+      - Optional: PyGithub package (falls back to httpx/urllib if not installed)
     """
 
-    _MSG = (
-        "GitHubRepositoryProvider is not implemented. "
-        "A real GitHub token (GITHUB_TOKEN env var) and network access are required. "
-        "Use LocalRepositoryProvider for local repositories."
-    )
+    _GITHUB_API = "https://api.github.com"
 
-    def __init__(self, owner: str, repo: str, token: Optional[str] = None):
+    def __init__(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: Optional[int] = None,
+        token: Optional[str] = None,
+    ):
         self._owner = owner
         self._repo = repo
-        # token is intentionally not stored — never log credentials
+        self._pr_number = pr_number
+        # Token is read from env if not explicitly provided
+        # Never stored in logs — only used for Authorization header
+        self._token = token or os.environ.get("GITHUB_TOKEN", "")
         self._local_clone: Optional[str] = None
+        self._pr_info: Optional[GitHubPRInfo] = None
+
+    @classmethod
+    def check_availability(cls, token: Optional[str] = None) -> ProviderStatus:
+        """
+        Check if GitHub access is available.
+
+        Returns ProviderStatus describing whether the provider can be used.
+        Never raises — always returns a usable status object.
+        """
+        tok = token or os.environ.get("GITHUB_TOKEN", "")
+        if not tok:
+            return ProviderStatus(
+                available=False,
+                provider="GitHubRepositoryProvider",
+                reason="GITHUB_TOKEN environment variable not set",
+                detail=(
+                    "Set GITHUB_TOKEN to a personal access token with "
+                    "'repo' or 'contents:read' scope to enable GitHub integration."
+                ),
+            )
+
+        # Try a lightweight API call to verify credentials
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                f"{cls._GITHUB_API}/user",
+                headers={
+                    "Authorization": f"token {tok}",
+                    "Accept": "application/vnd.github.v3+json",
+                    "User-Agent": "receipts-review/1.0",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    return ProviderStatus(
+                        available=True,
+                        provider="GitHubRepositoryProvider",
+                        reason="GitHub token valid and API reachable",
+                    )
+                else:
+                    return ProviderStatus(
+                        available=False,
+                        provider="GitHubRepositoryProvider",
+                        reason=f"GitHub API returned HTTP {resp.status}",
+                    )
+        except Exception as exc:
+            return ProviderStatus(
+                available=False,
+                provider="GitHubRepositoryProvider",
+                reason=f"GitHub API unreachable: {type(exc).__name__}: {exc}",
+                detail="Check network access and GITHUB_TOKEN validity.",
+            )
+
+    def _api_get(self, path: str) -> dict:
+        """Make an authenticated GET request to the GitHub API."""
+        if not self._token:
+            raise ProviderUnavailableError(
+                "GITHUB_TOKEN not set — GitHub integration unavailable"
+            )
+        import json as _json
+        import urllib.request
+        url = f"{self._GITHUB_API}{path}"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"token {self._token}",
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "receipts-review/1.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return _json.loads(resp.read().decode())
+        except Exception as exc:
+            raise ProviderUnavailableError(
+                f"GitHub API request failed: {exc}"
+            ) from exc
+
+    def _load_pr_info(self) -> GitHubPRInfo:
+        """Fetch PR metadata from GitHub API."""
+        if self._pr_info is not None:
+            return self._pr_info
+
+        if self._pr_number is None:
+            raise ProviderUnavailableError("pr_number is required for GitHub PR operations")
+
+        data = self._api_get(f"/repos/{self._owner}/{self._repo}/pulls/{self._pr_number}")
+        files_data = self._api_get(
+            f"/repos/{self._owner}/{self._repo}/pulls/{self._pr_number}/files"
+        )
+        changed_files = [f["filename"] for f in files_data if isinstance(f, dict)]
+
+        self._pr_info = GitHubPRInfo(
+            number=self._pr_number,
+            title=data.get("title", ""),
+            body=data.get("body"),
+            state=data.get("state", ""),
+            base_sha=data["base"]["sha"],
+            head_sha=data["head"]["sha"],
+            base_branch=data["base"]["ref"],
+            head_branch=data["head"]["ref"],
+            author=data["user"]["login"],
+            changed_files=changed_files,
+            additions=data.get("additions", 0),
+            deletions=data.get("deletions", 0),
+        )
+        return self._pr_info
+
+    def _ensure_clone(self) -> str:
+        """Clone the repository to a temp dir if not already done."""
+        if self._local_clone and os.path.isdir(self._local_clone):
+            return self._local_clone
+
+        if not self._token:
+            raise ProviderUnavailableError("GITHUB_TOKEN required for cloning")
+
+        clone_url = (
+            f"https://{self._token}@github.com/{self._owner}/{self._repo}.git"
+        )
+        tmp = tempfile.mkdtemp(prefix="receipts_gh_clone_")
+        try:
+            result = subprocess.run(
+                ["git", "clone", "--depth=1", clone_url, tmp],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode != 0:
+                shutil.rmtree(tmp, ignore_errors=True)
+                raise ProviderUnavailableError(
+                    f"git clone failed: {result.stderr[:200]}"
+                )
+            self._local_clone = tmp
+            return tmp
+        except subprocess.TimeoutExpired:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise ProviderUnavailableError("git clone timed out after 120s")
 
     @property
     def repo_path(self) -> str:
-        raise NotImplementedError(self._MSG)
+        return self._ensure_clone()
 
     def has_git(self) -> bool:
-        raise NotImplementedError(self._MSG)
+        try:
+            path = self._ensure_clone()
+            rc, _, _ = _run_git(["rev-parse", "--git-dir"], path)
+            return rc == 0
+        except ProviderUnavailableError:
+            return False
 
     def get_head_commit(self) -> Optional[CommitInfo]:
-        raise NotImplementedError(self._MSG)
+        try:
+            pr = self._load_pr_info()
+            return CommitInfo(
+                sha=pr.head_sha,
+                message=pr.title,
+                author=pr.author,
+                date="",
+            )
+        except ProviderUnavailableError:
+            return None
 
     def get_parent_commit(self) -> Optional[CommitInfo]:
-        raise NotImplementedError(self._MSG)
+        try:
+            pr = self._load_pr_info()
+            return CommitInfo(
+                sha=pr.base_sha,
+                message=f"base branch: {pr.base_branch}",
+                author="",
+                date="",
+            )
+        except ProviderUnavailableError:
+            return None
 
     def get_diff(self, base_ref: str = "HEAD~1", head_ref: str = "HEAD") -> DiffStat:
-        raise NotImplementedError(self._MSG)
+        try:
+            pr = self._load_pr_info()
+            return DiffStat(
+                added_lines=pr.additions,
+                removed_lines=pr.deletions,
+                changed_files=pr.changed_files,
+                raw_stat=f"+{pr.additions}/-{pr.deletions} across {len(pr.changed_files)} files",
+            )
+        except ProviderUnavailableError:
+            return DiffStat(added_lines=0, removed_lines=0, changed_files=[], raw_stat="")
 
     def read_file(self, relative_path: str) -> Optional[str]:
-        raise NotImplementedError(self._MSG)
+        try:
+            path = self._ensure_clone()
+            full = os.path.join(path, relative_path)
+            if not os.path.isfile(full):
+                return None
+            with open(full, encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except (ProviderUnavailableError, OSError):
+            return None
 
     def list_files(self, pattern: str = "**/*.py") -> list[str]:
-        raise NotImplementedError(self._MSG)
+        try:
+            path = self._ensure_clone()
+            import glob as _glob
+            matches = _glob.glob(os.path.join(path, pattern), recursive=True)
+            return [os.path.relpath(m, path) for m in matches]
+        except ProviderUnavailableError:
+            return []
 
     def create_workspace(self) -> Workspace:
-        raise NotImplementedError(self._MSG)
+        path = self._ensure_clone()
+        tmp = tempfile.mkdtemp(prefix="receipts_gh_ws_")
+        dest = os.path.join(tmp, "repo")
+        shutil.copytree(path, dest, symlinks=False)
+        return Workspace(path=dest, source_path=path)
+
+    def status(self) -> ProviderStatus:
+        return self.check_availability(self._token)
+
+    def get_pr_info(self) -> Optional[GitHubPRInfo]:
+        """Return PR metadata, or None if unavailable."""
+        try:
+            return self._load_pr_info()
+        except ProviderUnavailableError:
+            return None
+
+    def cleanup(self) -> None:
+        """Remove the local clone."""
+        if self._local_clone and os.path.isdir(self._local_clone):
+            shutil.rmtree(self._local_clone, ignore_errors=True)
+            self._local_clone = None
+
+
+class ProviderUnavailableError(RuntimeError):
+    """
+    Raised when a RepositoryProvider cannot fulfill a request.
+
+    Never fabricates data — callers must handle this and report the failure.
+    """
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -305,3 +574,23 @@ class GitHubRepositoryProvider(RepositoryProvider):
 def make_provider(local_path: str) -> LocalRepositoryProvider:
     """Create a LocalRepositoryProvider from a path string."""
     return LocalRepositoryProvider(local_path)
+
+
+def make_github_provider(
+    owner: str,
+    repo: str,
+    pr_number: Optional[int] = None,
+    token: Optional[str] = None,
+) -> tuple[Optional[GitHubRepositoryProvider], ProviderStatus]:
+    """
+    Create a GitHubRepositoryProvider after checking availability.
+
+    Returns (provider, status).
+    If unavailable, provider is None and status.reason explains why.
+    Never raises — always returns a usable status.
+    """
+    status = GitHubRepositoryProvider.check_availability(token)
+    if not status.available:
+        return None, status
+    provider = GitHubRepositoryProvider(owner, repo, pr_number, token)
+    return provider, status

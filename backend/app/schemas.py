@@ -298,6 +298,10 @@ class ReplayResultOut(BaseModel):
     review_run_id: Optional[str] = None
     output: Optional[str] = None
     error: Optional[str] = None
+    # Phase 8: planner/strategy trace metadata
+    planner_trace_json: Optional[str] = None
+    strategies_used: Optional[str] = None
+    strategy_count: Optional[int] = None
     created_at: datetime
 
 

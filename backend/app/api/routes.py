@@ -249,10 +249,14 @@ def start_immunity(
     db: Session = Depends(get_db),
 ):
     """
-    Trigger the Bug-to-Immunity pipeline for a completed review run.
+    Trigger the Bug-to-Immunity pipeline (Phase 7 canonical — V7 orchestrator).
 
-    The pipeline runs sequentially:
-    Reproduce → RootCause → Fix → Verify → RegressionTest → SiblingHunt → Documentation
+    Pipeline:
+    Reproduce → RootCause → Fix → Verify → RegressionTest → SiblingHunt
+    → Documentation → Pattern → IMMUNITY_COMPLETE | BLOCKED | ESCALATED
+
+    Uses ImmunityOrchestratorV7 with explicit state machine, hypothesis tracking,
+    AdaptiveFixPlanner (12 strategies), checkpoint/rollback, and evidence gates.
     """
     run = db.query(ReviewRun).filter(ReviewRun.id == run_id).first()
     if not run:
@@ -272,8 +276,9 @@ def start_immunity(
             detail=f"Repository path not found: {repo_path}",
         )
 
-    from app.immunity import ImmunityOrchestrator
-    orchestrator = ImmunityOrchestrator()
+    # Use canonical V7 orchestrator
+    from app.immunity.orchestrator_v7 import ImmunityOrchestratorV7
+    orchestrator = ImmunityOrchestratorV7()
     try:
         pipeline = orchestrator.run_pipeline(
             db=db,

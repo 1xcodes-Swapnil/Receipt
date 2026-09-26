@@ -270,7 +270,7 @@ class RootCauseStageV7(BaseStage):
             if traceback_info and traceback_info.get("file"):
                 tracker.verify(
                     h.hypothesis_id,
-                    verifying_evidence=f"Traceback confirms {error_type} in {traceback_info.get('file')}:{traceback_info.get('line')}",
+                    evidence=f"Traceback confirms {error_type} in {traceback_info.get('file')}:{traceback_info.get('line')}",
                     verified_by="traceback_analysis",
                 )
 
@@ -284,7 +284,7 @@ class RootCauseStageV7(BaseStage):
             if test_id in stdout:
                 tracker.verify(
                     htest.hypothesis_id,
-                    verifying_evidence=f"Test {test_id} explicitly appears in pytest output",
+                    evidence=f"Test {test_id} explicitly appears in pytest output",
                     verified_by="test_output",
                 )
 

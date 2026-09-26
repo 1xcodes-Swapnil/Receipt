@@ -269,8 +269,12 @@ class ReplayEngine:
         Each case executes in an isolated temporary workspace created from
         case.repository_path + case.included_files.  The workspace is always
         cleaned up after the case completes, regardless of outcome.
+
+        Phase 8: captures planner/strategy trace from StrategyTraceEntry rows
+        created during the review run and persists them on the ReplayResult.
         """
         from app.orchestration.orchestrator import ReviewOrchestrator
+        from app.models import StrategyTraceEntry
 
         start_ts = time.monotonic()
         result = ReplayResult(
@@ -321,6 +325,35 @@ class ReplayEngine:
             result.missed_bug = scores["missed_bug"]
             result.escalated = scores["escalated"]
             result.output = f"verdict={run.verdict} confidence={run.confidence}"
+
+            # Phase 8: capture planner/strategy trace for this run
+            try:
+                trace_entries = (
+                    db.query(StrategyTraceEntry)
+                    .filter(StrategyTraceEntry.review_run_id == run.id)
+                    .order_by(StrategyTraceEntry.step_number)
+                    .all()
+                )
+                if trace_entries:
+                    trace_data = [
+                        {
+                            "step": te.step_number,
+                            "strategy": te.strategy_name,
+                            "reason": te.selection_reason,
+                            "result": te.execution_result,
+                            "stopping_reason": te.stopping_reason,
+                        }
+                        for te in trace_entries
+                    ]
+                    result.planner_trace_json = json.dumps(trace_data, default=str)
+                    strategy_names = [te.strategy_name for te in trace_entries]
+                    result.strategies_used = ",".join(dict.fromkeys(strategy_names))
+                    result.strategy_count = len(trace_entries)
+            except Exception as trace_exc:
+                logger.warning(
+                    "Replay case %s: failed to capture planner trace: %s",
+                    case.id, trace_exc,
+                )
 
         except Exception as exc:
             elapsed = int((time.monotonic() - start_ts) * 1000)
