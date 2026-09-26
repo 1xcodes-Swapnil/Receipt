@@ -17,21 +17,27 @@ from app.events import event_bus
 from app.models import (
     AgentExecution,
     AuditEvent,
+    EvidenceGap,
+    EvidenceItem,
     ImmunityPipeline,
     PatternLibraryEntry,
     Receipt,
     ReplayCase,
     ReplayResult,
     ReplayRun,
+    ReviewClaim,
     ReviewEvent,
     ReviewRun,
     SiblingFinding,
+    StrategyTraceEntry,
 )
 from app.orchestration import ReviewOrchestrator
 from app.schemas import (
     AgentExecutionOut,
     AuditEventOut,
     AuditVerificationOut,
+    EvidenceGapOut,
+    EvidenceItemOut,
     HealthOut,
     ImmunityPipelineDetail,
     ImmunityPipelineOut,
@@ -43,11 +49,13 @@ from app.schemas import (
     ReplayResultOut,
     ReplayRunOut,
     ReceiptOut,
+    ReviewClaimOut,
     ReviewEventOut,
     ReviewRequest,
     ReviewRunDetail,
     ReviewRunOut,
     SiblingFindingOut,
+    StrategyTraceEntryOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -471,3 +479,68 @@ def verify_audit_chain(run_id: str, db: Session = Depends(get_db)):
     from app.audit.service import verify_chain
     result = verify_chain(db, run_id)
     return AuditVerificationOut(**result.to_dict())
+
+
+# ---------------------------------------------------------------------------
+# Adaptive Evidence Core — Phase 5 (New)
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/reviews/{run_id}/evidence",
+    response_model=list[EvidenceItemOut],
+    tags=["evidence"],
+)
+def get_evidence(run_id: str, db: Session = Depends(get_db)):
+    """Get all evidence items for a review run."""
+    run = db.query(ReviewRun).filter(ReviewRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Review run '{run_id}' not found")
+    items = db.query(EvidenceItem).filter(EvidenceItem.review_run_id == run_id).all()
+    return [EvidenceItemOut.model_validate(item) for item in items]
+
+
+@router.get(
+    "/reviews/{run_id}/claims",
+    response_model=list[ReviewClaimOut],
+    tags=["evidence"],
+)
+def get_claims(run_id: str, db: Session = Depends(get_db)):
+    """Get all review claims for a review run."""
+    run = db.query(ReviewRun).filter(ReviewRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Review run '{run_id}' not found")
+    claims = db.query(ReviewClaim).filter(ReviewClaim.review_run_id == run_id).all()
+    return [ReviewClaimOut.model_validate(c) for c in claims]
+
+
+@router.get(
+    "/reviews/{run_id}/evidence-gaps",
+    response_model=list[EvidenceGapOut],
+    tags=["evidence"],
+)
+def get_evidence_gaps(run_id: str, db: Session = Depends(get_db)):
+    """Get all evidence gaps for a review run."""
+    run = db.query(ReviewRun).filter(ReviewRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Review run '{run_id}' not found")
+    gaps = db.query(EvidenceGap).filter(EvidenceGap.review_run_id == run_id).all()
+    return [EvidenceGapOut.model_validate(g) for g in gaps]
+
+
+@router.get(
+    "/reviews/{run_id}/strategy-trace",
+    response_model=list[StrategyTraceEntryOut],
+    tags=["evidence"],
+)
+def get_strategy_trace(run_id: str, db: Session = Depends(get_db)):
+    """Get the strategy execution trace for a review run."""
+    run = db.query(ReviewRun).filter(ReviewRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Review run '{run_id}' not found")
+    entries = (
+        db.query(StrategyTraceEntry)
+        .filter(StrategyTraceEntry.review_run_id == run_id)
+        .order_by(StrategyTraceEntry.step_number)
+        .all()
+    )
+    return [StrategyTraceEntryOut.model_validate(e) for e in entries]

@@ -331,3 +331,70 @@ class AuditVerificationOut(BaseModel):
     total_events: int
     error_count: int
     errors: list[dict]
+
+
+# ---------------------------------------------------------------------------
+# Adaptive Evidence Core — Phase 5 (New)
+# ---------------------------------------------------------------------------
+
+class EvidenceItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    review_run_id: str
+    claim_id: Optional[str] = None
+    strategy_name: str
+    evidence_type: Optional[str] = None
+    result: str
+    confidence: float
+    command: Optional[str] = None
+    raw_output: Optional[str] = None
+    file_ref: Optional[str] = None
+    line_ref: Optional[int] = None
+    is_independent: bool = True
+    depends_on_evidence_id: Optional[str] = None
+    created_at: datetime
+
+
+class ReviewClaimOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    review_run_id: str
+    claim_type: str
+    claim_text: str
+    status: str
+    verdict_contribution: str
+    created_at: datetime
+
+
+class EvidenceGapOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    review_run_id: str
+    claim_id: Optional[str] = None
+    gap_type: str
+    description: str
+    suggested_strategy: Optional[str] = None
+    resolved: bool
+    created_at: datetime
+
+
+class StrategyTraceEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    review_run_id: str
+    step_number: int
+    claim_id: Optional[str] = None
+    strategy_name: str
+    selection_reason: Optional[str] = None
+    prerequisites_met: bool
+    execution_result: Optional[str] = None
+    evidence_item_id: Optional[str] = None
+    remaining_gap: Optional[str] = None
+    next_decision: Optional[str] = None
+    stopping_reason: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None

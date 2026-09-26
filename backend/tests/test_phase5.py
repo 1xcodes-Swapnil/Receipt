@@ -71,8 +71,15 @@ def setup_test_db():
 
     # Redirect orchestrator's per-thread SessionLocal to the test DB
     import app.orchestration.orchestrator as _orch
-    prev_session = _orch.SessionLocal
+    prev_orch_session = _orch.SessionLocal
     _orch.SessionLocal = TestingSession  # type: ignore[attr-defined]
+
+    # Also redirect app.database.SessionLocal so that code that imports it
+    # directly (e.g. concurrent audit writers, demo_cli._get_db) uses the
+    # test DB rather than the production SQLite file.
+    import app.database as _db
+    prev_db_session = _db.SessionLocal
+    _db.SessionLocal = TestingSession  # type: ignore[attr-defined]
 
     yield
 
@@ -81,7 +88,8 @@ def setup_test_db():
         fastapi_app.dependency_overrides.pop(get_db, None)
     else:
         fastapi_app.dependency_overrides[get_db] = prev_override
-    _orch.SessionLocal = prev_session
+    _orch.SessionLocal = prev_orch_session
+    _db.SessionLocal = prev_db_session
 
     engine.dispose()
     if os.path.exists(_TEST_DB_PATH):

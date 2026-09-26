@@ -83,31 +83,67 @@ def _new_db() -> Session:
 
 def _calculate_verdict(evidences: list[AgentEvidence]) -> tuple[str, float]:
     """
-    Phase 2 verdict logic (same rules as Phase 1, applied across all agents):
+    Phase 5 verdict logic.
 
-    - Any ERROR/TIMEOUT/INSUFFICIENT_EVIDENCE → ESCALATE
-    - Any FAIL → BUG_DETECTED
-    - All PASS → SAFE
+    The verdict is driven by EXECUTION evidence (test results).
+    Documentation issues are advisory and do not affect the verdict.
+
+    Priority order:
+    1. Empty evidences → ESCALATE
+    2. ERROR / TIMEOUT from any agent → ESCALATE (execution failed)
+    3. FAIL from test_runner, catching_test, or unknown agents → BUG_DETECTED
+       (documentation_check is explicitly excluded — doc issues are advisory)
+    4. test_runner PASS (with other agents PASS/INSUFFICIENT_EVIDENCE/advisory-FAIL)
+       → SAFE.  Advisory agents without git history return INSUFFICIENT_EVIDENCE;
+       doc check may return FAIL for workspaces without README.  Neither blocks SAFE
+       when the primary test evidence is clean.
+    5. INSUFFICIENT_EVIDENCE present with no test_runner PASS → ESCALATE
+    6. All PASS (no specific test_runner, e.g. unit tests of _calculate_verdict) → SAFE
+
+    Backward compatibility (test_receipts.py, test_phase2.py, final_verify.py):
+    - Solo AgentEvidence("t", ..., "PASS", ...) → SAFE      (step 6)
+    - Solo AgentEvidence("t", ..., "FAIL", ...) → BUG_DETECTED  (step 3, "t" ≠ doc)
+    - Solo AgentEvidence("t", ..., "ERROR", ...) → ESCALATE  (step 2)
+    - Solo AgentEvidence("t", ..., "INSUFFICIENT_EVIDENCE", ...) → ESCALATE  (step 5)
+    - [test_runner PASS, catching_test ERROR] → ESCALATE  (step 2)
+    - [test_runner PASS, catching_test FAIL] → BUG_DETECTED  (step 3)
     """
     if not evidences:
         return VerdictEnum.ESCALATE, 0.0
 
-    results = [e.result for e in evidences]
-
-    if any(r in ("ERROR", "TIMEOUT") for r in results):
+    # 1. Hard execution failure: ERROR or TIMEOUT → ESCALATE
+    if any(e.result in ("ERROR", "TIMEOUT") for e in evidences):
         return VerdictEnum.ESCALATE, 0.0
 
-    if any(r == "FAIL" for r in results):
-        # Confidence = highest confidence among FAIL results
-        fail_confidences = [e.confidence for e in evidences if e.result == "FAIL"]
-        confidence = max(fail_confidences) if fail_confidences else 0.5
+    # Advisory agents whose FAIL is informational and does not prove a code defect.
+    _ADVISORY = {"documentation_check"}
+
+    # 2. FAIL from non-advisory agents → BUG_DETECTED
+    hard_fails = [e for e in evidences
+                  if e.result == "FAIL" and e.agent not in _ADVISORY]
+    if hard_fails:
+        confidence = max(e.confidence for e in hard_fails)
         return VerdictEnum.BUG_DETECTED, confidence
 
-    # INSUFFICIENT_EVIDENCE without FAIL — escalate but with lower urgency
-    if any(r == "INSUFFICIENT_EVIDENCE" for r in results):
+    # 3. test_runner PASS → SAFE if no blocking failures remain
+    #    Non-test_runner agents may return FAIL (advisory) or INSUFFICIENT_EVIDENCE.
+    #    Both are non-blocking when the test runner confirms tests pass.
+    test_runner_evidences = [e for e in evidences if e.agent == "test_runner"]
+    if test_runner_evidences and all(e.result == "PASS" for e in test_runner_evidences):
+        # Remaining agents must not have hard errors (already checked above)
+        # INSUFFICIENT_EVIDENCE and advisory FAILs are acceptable here
+        other = [e for e in evidences if e.agent != "test_runner"]
+        if all(e.result in ("PASS", "INSUFFICIENT_EVIDENCE", "FAIL")
+               and (e.result != "FAIL" or e.agent in _ADVISORY)
+               for e in other):
+            return VerdictEnum.SAFE, 1.0
+
+    # 4. INSUFFICIENT_EVIDENCE without a clean test_runner PASS → ESCALATE
+    if any(e.result == "INSUFFICIENT_EVIDENCE" for e in evidences):
         return VerdictEnum.ESCALATE, 0.0
 
-    if all(r == "PASS" for r in results):
+    # 5. All PASS (covers single-evidence unit tests and multi-agent all-PASS)
+    if all(e.result == "PASS" for e in evidences):
         return VerdictEnum.SAFE, 1.0
 
     return VerdictEnum.ESCALATE, 0.0
@@ -313,10 +349,23 @@ class ReviewOrchestrator:
                         confidence=0.0,
                     ))
 
-        # 6. Calculate verdict
+        # 6. Run adaptive planner (populates evidence/claims/trace tables;
+        #    its AgentEvidence objects are intentionally discarded — the
+        #    verdict is always driven by the primary agent evidences above
+        #    to preserve full backward compatibility).
+        try:
+            from app.evidence.snapshot import RepositorySnapshot
+            from app.planner.planner import StrategyPlanner
+            snapshot = RepositorySnapshot.create(repo_path)
+            planner = StrategyPlanner()
+            planner.execute_adaptive(snapshot, db, run.id)
+        except Exception as _planner_exc:
+            logger.warning("Adaptive planner raised (non-fatal): %s", _planner_exc)
+
+        # 7. Calculate verdict
         verdict, confidence = _calculate_verdict(evidences)
 
-        # 7. Finalise run
+        # 8. Finalise run
         completed_at = datetime.utcnow()
         elapsed_ms = int((completed_at - run.started_at).total_seconds() * 1000)
         run.verdict = verdict

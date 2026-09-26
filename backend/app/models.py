@@ -1,5 +1,5 @@
 """
-SQLAlchemy ORM models for Receipts — Phase 4 upgraded.
+SQLAlchemy ORM models for Receipts — Phase 5 (Adaptive Evidence Core) upgraded.
 
 All models are imported by app/database.py so they are registered
 with Base.metadata before create_all() is called.
@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Enum,
     Float,
@@ -79,6 +80,7 @@ class ImmunityStatusEnum(str, enum.Enum):
     PASSED = "passed"
     FAILED = "failed"
     BLOCKED = "blocked"
+    ESCALATED = "escalated"          # Phase 7: automation cannot safely continue
 
 
 class StageTypeEnum(str, enum.Enum):
@@ -89,6 +91,41 @@ class StageTypeEnum(str, enum.Enum):
     REGRESSION_TEST = "regression_test"
     SIBLING_HUNT = "sibling_hunt"
     DOCUMENTATION = "documentation"
+    PATTERN = "pattern"              # Phase 7: explicit pattern evaluation stage
+
+
+class PipelineStateEnum(str, enum.Enum):
+    """Phase 7 explicit pipeline states."""
+    PENDING              = "PENDING"
+    RUNNING              = "RUNNING"
+    REPRODUCING          = "REPRODUCING"
+    ROOT_CAUSE           = "ROOT_CAUSE"
+    FIXING               = "FIXING"
+    VERIFYING            = "VERIFYING"
+    REGRESSION_TESTING   = "REGRESSION_TESTING"
+    SIBLING_HUNT         = "SIBLING_HUNT"
+    DOCUMENTING          = "DOCUMENTING"
+    PATTERN_EVALUATION   = "PATTERN_EVALUATION"
+    IMMUNITY_COMPLETE    = "IMMUNITY_COMPLETE"
+    BLOCKED              = "BLOCKED"
+    ESCALATED            = "ESCALATED"
+    FAILED               = "FAILED"
+
+
+class HypothesisStatusEnum(str, enum.Enum):
+    """Phase 7 hypothesis tracking."""
+    OPEN      = "OPEN"
+    VERIFIED  = "VERIFIED"
+    REJECTED  = "REJECTED"
+
+
+class FixCandidateStatusEnum(str, enum.Enum):
+    """Phase 7 fix candidate lifecycle."""
+    PENDING    = "PENDING"
+    APPLIED    = "APPLIED"
+    VERIFIED   = "VERIFIED"
+    REJECTED   = "REJECTED"
+    ROLLED_BACK = "ROLLED_BACK"
 
 
 class VerificationStatusEnum(str, enum.Enum):
@@ -330,6 +367,116 @@ class PatternLibraryEntry(Base):
 
 
 # ---------------------------------------------------------------------------
+# Adaptive Evidence Core — Phase 5 (New)
+# ---------------------------------------------------------------------------
+
+class EvidenceResultEnum(str, enum.Enum):
+    PASS = "PASS"
+    FAIL = "FAIL"
+    INSUFFICIENT = "INSUFFICIENT"
+    CONFLICT = "CONFLICT"
+    ERROR = "ERROR"
+
+
+class ClaimStatusEnum(str, enum.Enum):
+    OPEN = "OPEN"
+    SUPPORTED = "SUPPORTED"
+    REFUTED = "REFUTED"
+    INSUFFICIENT = "INSUFFICIENT"
+    CONFLICTED = "CONFLICTED"
+
+
+class VerdictContributionEnum(str, enum.Enum):
+    NONE = "NONE"
+    ADVISORY = "ADVISORY"
+    AUTHORITATIVE = "AUTHORITATIVE"
+
+
+class EvidenceGapTypeEnum(str, enum.Enum):
+    MISSING = "MISSING"
+    CONFLICTING = "CONFLICTING"
+    STALE = "STALE"
+    FAILED_STRATEGY = "FAILED_STRATEGY"
+
+
+class EvidenceItem(Base):
+    """Structured evidence item produced by a strategy."""
+    __tablename__ = "evidence_item"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    review_run_id: Mapped[str] = mapped_column(ForeignKey("review_run.id"), nullable=False, index=True)
+    claim_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    strategy_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    evidence_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result: Mapped[str] = mapped_column(Enum(EvidenceResultEnum), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    command: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    raw_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_ref: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    line_ref: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_independent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    depends_on_evidence_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    review_run: Mapped["ReviewRun"] = relationship()
+
+
+class ReviewClaim(Base):
+    """A claim (something we are trying to prove or disprove) for a review run."""
+    __tablename__ = "review_claim"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    review_run_id: Mapped[str] = mapped_column(ForeignKey("review_run.id"), nullable=False, index=True)
+    claim_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    claim_text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Enum(ClaimStatusEnum), nullable=False, default=ClaimStatusEnum.OPEN)
+    verdict_contribution: Mapped[str] = mapped_column(
+        Enum(VerdictContributionEnum), nullable=False, default=VerdictContributionEnum.AUTHORITATIVE
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    review_run: Mapped["ReviewRun"] = relationship()
+
+
+class EvidenceGap(Base):
+    """A gap in evidence: missing, conflicting, stale, or failed strategy."""
+    __tablename__ = "evidence_gap"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    review_run_id: Mapped[str] = mapped_column(ForeignKey("review_run.id"), nullable=False, index=True)
+    claim_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    gap_type: Mapped[str] = mapped_column(Enum(EvidenceGapTypeEnum), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    suggested_strategy: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    review_run: Mapped["ReviewRun"] = relationship()
+
+
+class StrategyTraceEntry(Base):
+    """Trace of a single planner decision (strategy selection + execution result)."""
+    __tablename__ = "strategy_trace_entry"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    review_run_id: Mapped[str] = mapped_column(ForeignKey("review_run.id"), nullable=False, index=True)
+    step_number: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    claim_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    strategy_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    selection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prerequisites_met: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    execution_result: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    evidence_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    remaining_gap: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_decision: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stopping_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    review_run: Mapped["ReviewRun"] = relationship()
+
+
+# ---------------------------------------------------------------------------
 # Replay (Phase 4 — tables exist, not yet implemented)
 # ---------------------------------------------------------------------------
 
@@ -443,3 +590,218 @@ class ReplayRun(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — Advanced Strategy Persistence
+# ---------------------------------------------------------------------------
+
+
+class AdvancedStrategyResultEnum(str, enum.Enum):
+    PASS = "PASS"
+    FAIL = "FAIL"
+    INSUFFICIENT = "INSUFFICIENT"
+    ERROR = "ERROR"
+    SKIPPED = "SKIPPED"
+
+
+class AdvancedStrategyExecution(Base):
+    """
+    Persists execution record for a Phase 6 advanced strategy run.
+
+    Links to the ReviewRun and captures seed, result, evidence, and cleanup status.
+    """
+    __tablename__ = "advanced_strategy_execution"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    review_run_id: Mapped[str] = mapped_column(ForeignKey("review_run.id"), nullable=False, index=True)
+    strategy_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    result: Mapped[str] = mapped_column(Enum(AdvancedStrategyResultEnum), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    iterations_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cleanup_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    review_run: Mapped["ReviewRun"] = relationship()
+
+
+class AdvancedEvidenceItem(Base):
+    """
+    Stores individual evidence items from advanced strategies (per-violation/finding).
+
+    One AdvancedStrategyExecution may produce multiple AdvancedEvidenceItems.
+    """
+    __tablename__ = "advanced_evidence_item"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    execution_id: Mapped[str] = mapped_column(
+        ForeignKey("advanced_strategy_execution.id"), nullable=False, index=True
+    )
+    review_run_id: Mapped[str] = mapped_column(ForeignKey("review_run.id"), nullable=False, index=True)
+    evidence_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    location: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    execution: Mapped["AdvancedStrategyExecution"] = relationship()
+    review_run: Mapped["ReviewRun"] = relationship()
+
+
+class CounterexampleRecord(Base):
+    """
+    Persists a counterexample record (original + minimized input).
+    """
+    __tablename__ = "counterexample_record"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    review_run_id: Mapped[str] = mapped_column(ForeignKey("review_run.id"), nullable=False, index=True)
+    strategy_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    property_description: Mapped[str] = mapped_column(Text, nullable=False)
+    original_input_repr: Mapped[str] = mapped_column(Text, nullable=False)
+    minimized_input_repr: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    seed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_minimized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    review_run: Mapped["ReviewRun"] = relationship()
+
+
+class MutationSummary(Base):
+    """
+    Aggregated mutation testing summary for a review run.
+    """
+    __tablename__ = "mutation_summary"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    review_run_id: Mapped[str] = mapped_column(ForeignKey("review_run.id"), nullable=False, index=True)
+    total_mutants: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    killed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    survived: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    invalid: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    kill_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    surviving_locations: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    review_run: Mapped["ReviewRun"] = relationship()
+
+
+class FaultLocalizationResult(Base):
+    """
+    Fault localization ranking result for a review run.
+    """
+    __tablename__ = "fault_localization_result"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    review_run_id: Mapped[str] = mapped_column(ForeignKey("review_run.id"), nullable=False, index=True)
+    n_failing: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    n_passing: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ranking_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    top_suspect: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    top_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    review_run: Mapped["ReviewRun"] = relationship()
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 — State Machine Persistence & Hypothesis/Fix Tracking
+# ---------------------------------------------------------------------------
+
+
+class PipelineStateTransition(Base):
+    """
+    Persists every state transition in the pipeline or a stage.
+
+    Stores: previous state, new state, timestamp, reason, evidence ref,
+    strategy/stage name, execution ID.
+    Never silently changes state — every change creates a record.
+    """
+    __tablename__ = "pipeline_state_transition"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    pipeline_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    stage_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    from_state: Mapped[str] = mapped_column(String(64), nullable=False)
+    to_state: Mapped[str] = mapped_column(String(64), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    execution_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ImmunityHypothesis(Base):
+    """
+    Tracks a root-cause hypothesis through OPEN → VERIFIED | REJECTED.
+
+    A hypothesis requires independent verification — fault localization alone
+    is not sufficient to mark it VERIFIED.
+    """
+    __tablename__ = "immunity_hypothesis"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    pipeline_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        Enum(HypothesisStatusEnum), nullable=False, default=HypothesisStatusEnum.OPEN
+    )
+    supporting_evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refuting_evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_strategy: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    verified_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class FixCandidate(Base):
+    """
+    Tracks a fix candidate through its lifecycle:
+    PENDING → APPLIED → VERIFIED | REJECTED | ROLLED_BACK
+
+    A candidate is accepted only when verification and regression tests pass.
+    Clean application alone is never sufficient for VERIFIED.
+    """
+    __tablename__ = "fix_candidate"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    pipeline_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    strategy_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    affected_file: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    diff: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        Enum(FixCandidateStatusEnum), nullable=False, default=FixCandidateStatusEnum.PENDING
+    )
+    verification_evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class ImmunityCheckpoint(Base):
+    """
+    Stores a file snapshot before a fix is applied (used for rollback).
+
+    One checkpoint per file per fix attempt.
+    """
+    __tablename__ = "immunity_checkpoint"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    fix_candidate_id: Mapped[str] = mapped_column(
+        ForeignKey("fix_candidate.id"), nullable=False, index=True
+    )
+    pipeline_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    file_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    original_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    fix_candidate: Mapped["FixCandidate"] = relationship()
