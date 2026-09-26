@@ -245,8 +245,8 @@ class TestFixStage:
         assert "root cause" in (result.error or "").lower()
 
     def test_fix_applies_accumulator_patch(self, tmp_path):
-        """Unit test the _fix_accumulator_reset method directly."""
-        from app.immunity.stages import FixStage
+        """Unit test AccumulatorResetStrategy.apply() directly."""
+        from app.immunity.fix_strategies import AccumulatorResetStrategy
 
         # Write a file with the accumulator bug
         buggy = tmp_path / "stats.py"
@@ -258,12 +258,15 @@ class TestFixStage:
             "    return total / len(values)\n"
         )
 
-        stage = FixStage()
-        success, diff, err = stage._fix_accumulator_reset(str(tmp_path), "stats.py")
+        strategy = AccumulatorResetStrategy()
+        fix_result = strategy.apply(str(tmp_path), "stats.py")
 
-        assert success, f"Fix should succeed. Error: {err}"
-        assert diff is not None
+        assert fix_result.success, f"Fix should succeed. Error: {fix_result.error}"
+        assert fix_result.diff is not None
         assert "total += v" in buggy.read_text()
+        # regression_hint should identify the function
+        assert fix_result.regression_hint is not None
+        assert "mean" in fix_result.regression_hint.get("changed_functions", [])
 
 
 # ---------------------------------------------------------------------------

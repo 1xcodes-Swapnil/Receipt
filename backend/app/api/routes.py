@@ -1,5 +1,5 @@
 """
-FastAPI route handlers for Receipts Phase 2 + 3.
+FastAPI route handlers for Receipts Phase 2 + 3 + 4.
 """
 from __future__ import annotations
 
@@ -16,9 +16,13 @@ from app.database import get_db
 from app.events import event_bus
 from app.models import (
     AgentExecution,
+    AuditEvent,
     ImmunityPipeline,
     PatternLibraryEntry,
     Receipt,
+    ReplayCase,
+    ReplayResult,
+    ReplayRun,
     ReviewEvent,
     ReviewRun,
     SiblingFinding,
@@ -26,12 +30,18 @@ from app.models import (
 from app.orchestration import ReviewOrchestrator
 from app.schemas import (
     AgentExecutionOut,
+    AuditEventOut,
+    AuditVerificationOut,
     HealthOut,
     ImmunityPipelineDetail,
     ImmunityPipelineOut,
     ImmunityRequest,
     ImmunityStageOut,
     PatternLibraryEntryOut,
+    ReplayCaseOut,
+    ReplayRequest,
+    ReplayResultOut,
+    ReplayRunOut,
     ReceiptOut,
     ReviewEventOut,
     ReviewRequest,
@@ -77,6 +87,13 @@ def create_review(
     db: Session = Depends(get_db),
 ):
     """Trigger a review. Runs all four agents in parallel."""
+    # Security: validate repo name before it is used in path construction
+    from app.security import validate_repo_name
+    try:
+        repo = validate_repo_name(repo)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     orchestrator = ReviewOrchestrator()
     try:
         run = orchestrator.run_review(
@@ -330,3 +347,127 @@ def get_pattern(pattern_id: str, db: Session = Depends(get_db)):
     if not entry:
         raise HTTPException(status_code=404, detail=f"Pattern '{pattern_id}' not found")
     return PatternLibraryEntryOut.model_validate(entry)
+
+
+# ---------------------------------------------------------------------------
+# Replay Engine — Phase 4
+# ---------------------------------------------------------------------------
+
+@router.get("/replay/cases", response_model=list[ReplayCaseOut], tags=["replay"])
+def list_replay_cases(
+    include_invalid: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    """List all replay cases. Excludes invalid cases by default."""
+    q = db.query(ReplayCase)
+    if not include_invalid:
+        q = q.filter(ReplayCase.is_valid == True)  # noqa: E712
+    return [ReplayCaseOut.model_validate(c) for c in q.order_by(ReplayCase.created_at).all()]
+
+
+@router.get("/replay/cases/{case_id}", response_model=ReplayCaseOut, tags=["replay"])
+def get_replay_case(case_id: str, db: Session = Depends(get_db)):
+    """Get a single replay case."""
+    case = db.query(ReplayCase).filter(ReplayCase.id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail=f"Replay case '{case_id}' not found")
+    return ReplayCaseOut.model_validate(case)
+
+
+@router.get("/replay/cases/{case_id}/results", response_model=list[ReplayResultOut], tags=["replay"])
+def get_case_results(case_id: str, db: Session = Depends(get_db)):
+    """Get all results for a replay case."""
+    case = db.query(ReplayCase).filter(ReplayCase.id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail=f"Replay case '{case_id}' not found")
+    results = db.query(ReplayResult).filter(ReplayResult.replay_case_id == case_id).all()
+    return [ReplayResultOut.model_validate(r) for r in results]
+
+
+@router.post("/replay/run", response_model=ReplayRunOut, status_code=201, tags=["replay"])
+def run_replay(
+    body: ReplayRequest = Body(default_factory=ReplayRequest),
+    db: Session = Depends(get_db),
+):
+    """
+    Execute replay cases through the production review pipeline and score results.
+    If case_ids is empty/None, runs all valid cases.
+    """
+    from app.replay.engine import ReplayEngine
+    engine = ReplayEngine()
+    try:
+        replay_run = engine.run_cases(
+            db=db,
+            case_ids=body.case_ids or None,
+            label=body.label,
+        )
+    except Exception as exc:
+        logger.exception("Replay run failed")
+        raise HTTPException(status_code=500, detail=f"Replay run failed: {exc}") from exc
+    return ReplayRunOut.model_validate(replay_run)
+
+
+@router.get("/replay/runs/{run_id}", response_model=ReplayRunOut, tags=["replay"])
+def get_replay_run(run_id: str, db: Session = Depends(get_db)):
+    """Get a replay run result."""
+    run = db.query(ReplayRun).filter(ReplayRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Replay run '{run_id}' not found")
+    return ReplayRunOut.model_validate(run)
+
+
+@router.post("/replay/seed", response_model=list[ReplayCaseOut], status_code=201, tags=["replay"])
+def seed_replay_cases(db: Session = Depends(get_db)):
+    """Seed demo replay cases into the database."""
+    from app.replay.demo_cases import seed_demo_cases
+    cases = seed_demo_cases(db, demo_repo_path=settings.demo_repo_path)
+    return [ReplayCaseOut.model_validate(c) for c in cases]
+
+
+@router.post("/replay/validate", response_model=dict, tags=["replay"])
+def validate_replay_cases(db: Session = Depends(get_db)):
+    """Validate all replay cases and mark invalid ones."""
+    from app.replay.engine import ReplayEngine
+    engine = ReplayEngine()
+    return engine.validate_cases(db)
+
+
+# ---------------------------------------------------------------------------
+# Audit Verification — Phase 4
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/reviews/{run_id}/audit",
+    response_model=list[AuditEventOut],
+    tags=["audit"],
+)
+def get_audit_events(run_id: str, db: Session = Depends(get_db)):
+    """Get all audit events for a review run, in chain order."""
+    run = db.query(ReviewRun).filter(ReviewRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Review run '{run_id}' not found")
+    events = (
+        db.query(AuditEvent)
+        .filter(AuditEvent.review_run_id == run_id)
+        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+        .all()
+    )
+    return [AuditEventOut.model_validate(ev) for ev in events]
+
+
+@router.get(
+    "/reviews/{run_id}/audit/verify",
+    response_model=AuditVerificationOut,
+    tags=["audit"],
+)
+def verify_audit_chain(run_id: str, db: Session = Depends(get_db)):
+    """
+    Verify the SHA-256 hash chain for a review run's audit events.
+    Returns valid=True if the chain is intact, with error details if not.
+    """
+    run = db.query(ReviewRun).filter(ReviewRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Review run '{run_id}' not found")
+    from app.audit.service import verify_chain
+    result = verify_chain(db, run_id)
+    return AuditVerificationOut(**result.to_dict())

@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from app.security import truncate_output
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 120  # seconds
@@ -79,7 +81,8 @@ class Sandbox:
         self._tmpdir = tempfile.mkdtemp(prefix="receipts_sandbox_")
         if self.copy_source and os.path.isdir(self.source_path):
             dest = os.path.join(self._tmpdir, "repo")
-            shutil.copytree(self.source_path, dest)
+            # symlinks=False: prevent symlink-escape attacks from repo content
+            shutil.copytree(self.source_path, dest, symlinks=False)
             self._work_subdir = dest
         else:
             self._work_subdir = self._tmpdir
@@ -136,8 +139,8 @@ class Sandbox:
             return SandboxResult(
                 command=cmd_str,
                 exit_code=proc.returncode,
-                stdout=proc.stdout or "",
-                stderr=proc.stderr or "",
+                stdout=truncate_output(proc.stdout or ""),
+                stderr=truncate_output(proc.stderr or ""),
                 duration_ms=elapsed,
             )
         except subprocess.TimeoutExpired as exc:

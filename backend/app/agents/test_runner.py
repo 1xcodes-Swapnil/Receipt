@@ -7,6 +7,7 @@ import time
 from typing import Optional
 
 from app.agents.base import AgentEvidence, BaseAgent
+from app.security import truncate_output
 
 
 # Test framework detection: (detection_file, command)
@@ -103,6 +104,21 @@ class TestRunner(BaseAgent):
                 duration_ms=elapsed,
                 title="Test Runner — All Tests Pass",
             )
+        elif proc.returncode == 5:
+            # pytest exit code 5: no tests were collected
+            # This is not a test failure — it means there are no tests in the repo.
+            # Return INSUFFICIENT_EVIDENCE so the verdict becomes ESCALATE, not BUG_DETECTED.
+            return AgentEvidence(
+                agent=self.agent_type,
+                command=command_str,
+                result="INSUFFICIENT_EVIDENCE",
+                evidence=combined_output or "No tests collected (pytest exit code 5).",
+                exit_code=proc.returncode,
+                severity="INFO",
+                confidence=0.0,
+                duration_ms=elapsed,
+                title="Test Runner — No Tests Found",
+            )
         else:
             return AgentEvidence(
                 agent=self.agent_type,
@@ -130,10 +146,11 @@ class TestRunner(BaseAgent):
 
     @staticmethod
     def _build_output(proc: subprocess.CompletedProcess) -> str:
-        """Combine stdout and stderr into a single evidence string."""
+        """Combine stdout and stderr into a single evidence string (truncated)."""
         parts = []
         if proc.stdout and proc.stdout.strip():
             parts.append(proc.stdout)
         if proc.stderr and proc.stderr.strip():
             parts.append("--- stderr ---\n" + proc.stderr)
-        return "\n".join(parts) if parts else f"(exit code {proc.returncode}, no output)"
+        raw = "\n".join(parts) if parts else f"(exit code {proc.returncode}, no output)"
+        return truncate_output(raw)

@@ -41,7 +41,7 @@ engine = create_engine(
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def override_get_db():
+def _override_get_db():
     import app.models  # noqa: F401 — register models
     Base.metadata.create_all(bind=engine)
     db = TestingSessionLocal()
@@ -50,8 +50,6 @@ def override_get_db():
     finally:
         db.close()
 
-
-fastapi_app.dependency_overrides[get_db] = override_get_db
 
 # Point to demo repository relative to project root
 DEMO_REPO = os.path.abspath(
@@ -66,11 +64,26 @@ import app.orchestration.orchestrator as _orch  # noqa: E402
 
 
 @pytest.fixture(scope="module", autouse=True)
-def setup_db():
-    """Create tables; drop DB file on teardown."""
+def patch_module_globals():
+    """
+    Scope all global patches to this module's tests only.
+    Saves and restores FastAPI dependency overrides and orchestrator SessionLocal
+    to prevent cross-module contamination when running the full test suite.
+    """
     import app.models  # noqa: F401 — registers models
     Base.metadata.create_all(bind=engine)
+
+    prev_override = fastapi_app.dependency_overrides.get(get_db)
+    fastapi_app.dependency_overrides[get_db] = _override_get_db
+    prev_session = _orch.SessionLocal
+    _orch.SessionLocal = TestingSessionLocal  # type: ignore[attr-defined]
     yield
+    # Restore
+    if prev_override is None:
+        fastapi_app.dependency_overrides.pop(get_db, None)
+    else:
+        fastapi_app.dependency_overrides[get_db] = prev_override
+    _orch.SessionLocal = prev_session
     engine.dispose()
     try:
         os.remove(_TEST_DB_FILE)
@@ -78,21 +91,8 @@ def setup_db():
         pass  # Windows file lock — harmless
 
 
-@pytest.fixture(scope="module", autouse=True)
-def patch_session_local(setup_db):
-    """
-    CRITICAL: patch _orch.SessionLocal for the duration of this module's tests.
-    Ensures agent worker threads (ThreadPoolExecutor) write to the test DB.
-    Restore after the module to not pollute other test modules.
-    """
-    original = _orch.SessionLocal
-    _orch.SessionLocal = TestingSessionLocal  # type: ignore[attr-defined]
-    yield
-    _orch.SessionLocal = original
-
-
 @pytest.fixture(scope="module")
-def client(patch_session_local):
+def client(patch_module_globals):
     with TestClient(fastapi_app) as c:
         yield c
 

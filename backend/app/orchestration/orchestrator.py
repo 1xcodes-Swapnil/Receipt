@@ -259,6 +259,7 @@ class ReviewOrchestrator:
         base_branch: str = "main",
         head_branch: Optional[str] = None,
         commit_sha: Optional[str] = None,
+        repository_path_override: Optional[str] = None,
     ) -> ReviewRun:
         # 1. Create/find repository
         repo = self._get_or_create_repo(db, repo_name)
@@ -267,7 +268,8 @@ class ReviewOrchestrator:
         pr = self._create_pr(db, repo, pr_number, pr_title, author, base_branch, head_branch, commit_sha)
 
         # 3. Risk Assessment
-        repo_path = repo.local_path or settings.demo_repo_path
+        # repository_path_override is used by replay engine to pass an isolated workspace
+        repo_path = repository_path_override or repo.local_path or settings.demo_repo_path
         risk_result = assess_risk(repo_path)
         risk_level = risk_result.level
 

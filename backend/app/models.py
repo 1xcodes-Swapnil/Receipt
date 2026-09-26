@@ -1,5 +1,5 @@
 """
-SQLAlchemy ORM models for Receipts.
+SQLAlchemy ORM models for Receipts — Phase 4 upgraded.
 
 All models are imported by app/database.py so they are registered
 with Base.metadata before create_all() is called.
@@ -164,6 +164,21 @@ class AgentExecution(Base):
 
 
 class Receipt(Base):
+    """
+    Evidence receipt produced by an agent.
+
+    ``bob_evidence_ref``: nullable extension point for Bob artifact references.
+
+    Bob artifacts (session transcripts, skill outputs, etc.) are not
+    programmatically accessible from Python — there is no API to retrieve
+    them by session ID.  This field is an extension point only: a human or
+    an external integration can populate it with a Bob session reference
+    after the fact.  The application never auto-populates this field and
+    never fabricates Bob session IDs.
+
+    Format (when populated externally):
+      {"session_id": "<uuid>", "artifact_type": "...", "note": "..."}
+    """
     __tablename__ = "receipt"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -177,6 +192,9 @@ class Receipt(Base):
     file_ref: Mapped[str | None] = mapped_column(String(512), nullable=True)
     severity: Mapped[str] = mapped_column(Enum(SeverityEnum), nullable=False, default=SeverityEnum.INFO)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Bob evidence reference — extension point only, never auto-populated.
+    # See class docstring for the limitation.
+    bob_evidence_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     review_run: Mapped["ReviewRun"] = relationship()
@@ -208,9 +226,18 @@ class AuditEvent(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     review_run_id: Mapped[str | None] = mapped_column(ForeignKey("review_run.id"), nullable=True, index=True)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    # payload: raw (non-canonical) payload for display
     payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # canonical_payload: deterministic JSON used in hash computation (sorted keys, no whitespace)
+    canonical_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     integrity_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prev_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # entity: optional reference (e.g. "review_run:abc", "pipeline:xyz")
+    entity_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # sequence: monotonically-increasing integer assigned under _audit_lock.
+    # This is the authoritative ordering for the hash chain — do NOT use created_at
+    # for chain ordering because parallel threads may commit with equal timestamps.
+    sequence: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     review_run: Mapped["ReviewRun | None"] = relationship(back_populates="audit_events")
@@ -306,24 +333,113 @@ class PatternLibraryEntry(Base):
 # Replay (Phase 4 — tables exist, not yet implemented)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Replay Engine Enums — Phase 4
+# ---------------------------------------------------------------------------
+
+class ReplayCaseStatusEnum(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    INVALID = "invalid"
+
+
+class GroundTruthEnum(str, enum.Enum):
+    """Expected outcome for a replay case."""
+    BUG = "BUG"          # Known bug — system should find it
+    SAFE = "SAFE"        # Known clean code — system should say SAFE
+    AMBIGUOUS = "AMBIGUOUS"  # Ground truth unclear
+
+
+class ReplayAgentEnum(str, enum.Enum):
+    """Who produced the ground truth label."""
+    HUMAN = "HUMAN"
+    BOB_BUILTIN = "BOB_BUILTIN"
+    RECEIPTS = "RECEIPTS"
+    NOT_AVAILABLE = "NOT_AVAILABLE"
+
+
 class ReplayCase(Base):
+    """
+    A single replay case: one repository state + expected ground truth.
+    Cases are validated before execution. Only cases with reliable ground truth
+    are used for scoring.
+
+    ``included_files``: optional JSON list of file paths (relative to
+    repository_path) to copy into the isolated workspace.  When set, ONLY
+    those files are used — this prevents SAFE cases from seeing buggy files
+    that happen to live in the same source directory.
+    """
     __tablename__ = "replay_case"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
-    receipt_id: Mapped[str] = mapped_column(ForeignKey("receipt.id"), nullable=False)
+    # Human-readable label (e.g. "calc_divide_by_zero", "buggy_stats_accumulator")
+    label: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Repository path or identifier used for this case
+    repository_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Optional JSON list of file paths (relative to repository_path) for isolation
+    included_files: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Ground truth
+    ground_truth: Mapped[str] = mapped_column(Enum(GroundTruthEnum), nullable=False)
+    ground_truth_source: Mapped[str] = mapped_column(Enum(ReplayAgentEnum), nullable=False)
+    ground_truth_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Case validity — cases marked INVALID are not used for scoring
+    is_valid: Mapped[bool] = mapped_column(default=True)
+    validation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     results: Mapped[list["ReplayResult"]] = relationship(back_populates="replay_case")
 
 
 class ReplayResult(Base):
+    """
+    Result of running the Receipts review pipeline on a replay case.
+    Stores the actual verdict, evidence summary, and scoring breakdown.
+    """
     __tablename__ = "replay_result"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
-    replay_case_id: Mapped[str] = mapped_column(ForeignKey("replay_case.id"), nullable=False)
+    replay_case_id: Mapped[str] = mapped_column(ForeignKey("replay_case.id"), nullable=False, index=True)
+    # Actual verdict produced by the review pipeline
     verdict: Mapped[str | None] = mapped_column(Enum(VerdictEnum), nullable=True)
+    # Was the verdict correct given the ground truth?
+    correct: Mapped[bool | None] = mapped_column(nullable=True)
+    # Scoring fields
+    caught_bug: Mapped[bool | None] = mapped_column(nullable=True)       # True when BUG ground truth + BUG_DETECTED
+    false_alarm: Mapped[bool | None] = mapped_column(nullable=True)      # True when SAFE ground truth + BUG_DETECTED
+    missed_bug: Mapped[bool | None] = mapped_column(nullable=True)       # True when BUG ground truth + SAFE
+    escalated: Mapped[bool | None] = mapped_column(nullable=True)
+    execution_failed: Mapped[bool] = mapped_column(default=False)
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Review run created during replay
+    review_run_id: Mapped[str | None] = mapped_column(ForeignKey("review_run.id"), nullable=True)
+    # Raw output summary
     output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     replay_case: Mapped["ReplayCase"] = relationship(back_populates="results")
+    review_run: Mapped["ReviewRun | None"] = relationship()
+
+
+class ReplayRun(Base):
+    """
+    Aggregated result of running multiple replay cases in one batch.
+    Stores aggregate scoring metrics.
+    """
+    __tablename__ = "replay_run"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(Enum(ReplayCaseStatusEnum), nullable=False,
+                                        default=ReplayCaseStatusEnum.PENDING)
+    # Aggregate metrics (JSON)
+    metrics_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    total_cases: Mapped[int] = mapped_column(Integer, default=0)
+    cases_run: Mapped[int] = mapped_column(Integer, default=0)
+    cases_failed: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

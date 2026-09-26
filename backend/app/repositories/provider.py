@@ -226,10 +226,15 @@ class LocalRepositoryProvider(RepositoryProvider):
         return [os.path.relpath(m, self._path) for m in matches]
 
     def create_workspace(self) -> Workspace:
-        """Copy the entire repository to a temp directory."""
+        """Copy the entire repository to a temp directory.
+
+        symlinks=False: symlinks are expanded to their targets so a
+        malicious symlink inside the repo cannot escape the workspace
+        boundary (symlink escape / path traversal defence).
+        """
         tmp = tempfile.mkdtemp(prefix="receipts_ws_")
         dest = os.path.join(tmp, "repo")
-        shutil.copytree(self._path, dest)
+        shutil.copytree(self._path, dest, symlinks=False)
         return Workspace(path=dest, source_path=self._path)
 
 
@@ -239,45 +244,58 @@ class LocalRepositoryProvider(RepositoryProvider):
 
 class GitHubRepositoryProvider(RepositoryProvider):
     """
-    GitHub repository provider — Phase 3 STUB only.
+    GitHub repository provider — STUB only.
 
     This class defines the interface a real GitHub connector must implement.
     It does NOT make real GitHub API calls and will raise NotImplementedError
-    on any operation.
+    on every operation.
 
-    Phase 4 will implement this using the GitHub REST API.
+    To implement this you would need:
+      - A GitHub personal access token (or GitHub App credentials) with
+        ``repo`` / ``contents:read`` scope set in GITHUB_TOKEN env variable.
+      - The PyGithub or httpx library to call the GitHub REST API.
+      - A local clone (or in-memory tree) to satisfy the repo_path contract.
+
+    This is intentionally unimplemented — no credentials are available in
+    the current deployment.  Do NOT attempt to fake GitHub responses.
     """
+
+    _MSG = (
+        "GitHubRepositoryProvider is not implemented. "
+        "A real GitHub token (GITHUB_TOKEN env var) and network access are required. "
+        "Use LocalRepositoryProvider for local repositories."
+    )
 
     def __init__(self, owner: str, repo: str, token: Optional[str] = None):
         self._owner = owner
         self._repo = repo
-        self._token = token
+        # token is intentionally not stored — never log credentials
         self._local_clone: Optional[str] = None
 
     @property
     def repo_path(self) -> str:
-        raise NotImplementedError("GitHubRepositoryProvider is not implemented in Phase 3")
+        raise NotImplementedError(self._MSG)
 
     def has_git(self) -> bool:
-        raise NotImplementedError("GitHubRepositoryProvider is not implemented in Phase 3")
+        raise NotImplementedError(self._MSG)
 
     def get_head_commit(self) -> Optional[CommitInfo]:
-        raise NotImplementedError("GitHubRepositoryProvider is not implemented in Phase 3")
+        raise NotImplementedError(self._MSG)
 
     def get_parent_commit(self) -> Optional[CommitInfo]:
-        raise NotImplementedError("GitHubRepositoryProvider is not implemented in Phase 3")
+        raise NotImplementedError(self._MSG)
 
     def get_diff(self, base_ref: str = "HEAD~1", head_ref: str = "HEAD") -> DiffStat:
-        raise NotImplementedError("GitHubRepositoryProvider is not implemented in Phase 3")
+        raise NotImplementedError(self._MSG)
 
     def read_file(self, relative_path: str) -> Optional[str]:
-        raise NotImplementedError("GitHubRepositoryProvider is not implemented in Phase 3")
+        raise NotImplementedError(self._MSG)
 
     def list_files(self, pattern: str = "**/*.py") -> list[str]:
-        raise NotImplementedError("GitHubRepositoryProvider is not implemented in Phase 3")
+        raise NotImplementedError(self._MSG)
 
     def create_workspace(self) -> Workspace:
-        raise NotImplementedError("GitHubRepositoryProvider is not implemented in Phase 3")
+        raise NotImplementedError(self._MSG)
 
 
 # ---------------------------------------------------------------------------

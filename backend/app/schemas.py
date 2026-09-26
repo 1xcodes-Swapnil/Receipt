@@ -85,6 +85,22 @@ class AgentExecutionOut(BaseModel):
 # Receipt
 # ---------------------------------------------------------------------------
 
+class BobEvidenceRef(BaseModel):
+    """
+    Extension point for a Bob artifact reference on a Receipt.
+
+    Bob artifacts (session transcripts, skill outputs) are not programmatically
+    accessible from Python — no API exists to retrieve them by session ID.
+    This schema is an extension point only.  The application NEVER auto-populates
+    bob_evidence_ref and NEVER fabricates Bob session IDs.
+
+    A human or external integration may supply this value after the fact.
+    """
+    session_id: Optional[str] = None
+    artifact_type: Optional[str] = None
+    note: Optional[str] = None
+
+
 class ReceiptOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -100,11 +116,14 @@ class ReceiptOut(BaseModel):
     file_ref: Optional[str] = None
     severity: str
     confidence: float
+    # Bob evidence reference — extension point only, never auto-populated.
+    # See BobEvidenceRef docstring for limitation details.
+    bob_evidence_ref: Optional[str] = None
     created_at: datetime
 
 
 # ---------------------------------------------------------------------------
-# Audit Event
+# Audit Event (Phase 1 base — upgraded schema is in Phase 4 section below)
 # ---------------------------------------------------------------------------
 
 class AuditEventOut(BaseModel):
@@ -114,8 +133,11 @@ class AuditEventOut(BaseModel):
     review_run_id: Optional[str] = None
     event_type: str
     payload: Optional[str] = None
+    canonical_payload: Optional[str] = None
     integrity_hash: Optional[str] = None
     prev_hash: Optional[str] = None
+    entity_ref: Optional[str] = None
+    sequence: Optional[int] = None
     created_at: datetime
 
 
@@ -238,3 +260,74 @@ class ImmunityRequest(BaseModel):
 
 # Resolve forward references for detail schemas
 ImmunityPipelineDetail.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# Replay Engine — Phase 4
+# ---------------------------------------------------------------------------
+
+class ReplayCaseOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    label: str
+    description: Optional[str] = None
+    repository_path: Optional[str] = None
+    included_files: Optional[str] = None   # JSON list of relative file paths for isolation
+    ground_truth: str
+    ground_truth_source: str
+    ground_truth_notes: Optional[str] = None
+    is_valid: bool
+    validation_error: Optional[str] = None
+    created_at: datetime
+
+
+class ReplayResultOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    replay_case_id: str
+    verdict: Optional[str] = None
+    correct: Optional[bool] = None
+    caught_bug: Optional[bool] = None
+    false_alarm: Optional[bool] = None
+    missed_bug: Optional[bool] = None
+    escalated: Optional[bool] = None
+    execution_failed: bool
+    elapsed_ms: Optional[int] = None
+    review_run_id: Optional[str] = None
+    output: Optional[str] = None
+    error: Optional[str] = None
+    created_at: datetime
+
+
+class ReplayRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    label: Optional[str] = None
+    status: str
+    metrics_json: Optional[str] = None
+    total_cases: int
+    cases_run: int
+    cases_failed: int
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class ReplayRequest(BaseModel):
+    """Body for POST /replay/run."""
+    case_ids: Optional[list[str]] = None
+    label: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Audit verification — Phase 4
+# ---------------------------------------------------------------------------
+
+class AuditVerificationOut(BaseModel):
+    valid: bool
+    total_events: int
+    error_count: int
+    errors: list[dict]

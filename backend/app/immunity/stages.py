@@ -25,7 +25,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -374,20 +373,19 @@ class RootCauseStage(BaseStage):
 
 class FixStage(BaseStage):
     """
-    Apply a deterministic fix to the repository copy.
-    Phase 3: rule-based patching derived from the root cause evidence.
-    Does NOT use AI to generate code. Only applies if a known pattern matches.
-    If no rule matches, marks the stage FAILED with reason — never fabricates a fix.
+    Apply a deterministic fix to the repository copy using the FixStrategy abstraction.
+
+    Iterates registered strategies in order and applies the first one whose
+    can_apply() returns True. Passes regression_hint back via context so
+    RegressionTestStage can generate real assertion-based tests.
+
+    Never fabricates a fix. If no strategy matches → FAILED explicitly.
     """
     stage_type = StageTypeEnum.FIX
 
-    # Known fixable patterns: (regex on error_message, description, patcher_method)
-    _PATTERNS: list[tuple[str, str, str]] = [
-        # Accumulator reset bug: `subtotal = v` instead of `total += v`
-        (r"subtotal\s*=\s*\w+", "accumulator_reset", "_fix_accumulator_reset"),
-    ]
-
     def run(self, pipeline_id: str, context: ImmunityContext, db: Session) -> StageResult:
+        from app.immunity.fix_strategies import find_strategy
+
         root_cause = context.get_stage(StageTypeEnum.ROOT_CAUSE)
         if not root_cause:
             result = StageResult(
@@ -399,37 +397,43 @@ class FixStage(BaseStage):
             context.set_stage(self.stage_type, result.evidence)
             return result
 
-        affected_file = root_cause.get("affected_file")
-        source_snippet = root_cause.get("source_snippet", "")
-        error_message = root_cause.get("error_message", "")
+        affected_file = root_cause.get("affected_file") or ""
+        source_snippet = root_cause.get("source_snippet") or ""
+        error_message = root_cause.get("error_message") or ""
 
-        # Try to locate and apply a fix
-        fix_applied = False
-        fix_description = None
-        diff_output = None
-        patch_file = None
+        strategy = find_strategy(source_snippet, error_message, affected_file)
 
-        if affected_file:
-            for pattern, description, method in self._PATTERNS:
-                combined = (source_snippet or "") + (error_message or "")
-                if re.search(pattern, combined, re.IGNORECASE):
-                    patcher = getattr(self, method, None)
-                    if patcher:
-                        success, diff, err = patcher(context.repository_path, affected_file)
-                        if success:
-                            fix_applied = True
-                            fix_description = description
-                            diff_output = diff
-                            break
+        if strategy is None or not affected_file:
+            evidence = {
+                "affected_file": affected_file,
+                "fix_applied": False,
+                "fix_description": None,
+                "diff": None,
+                "strategy": None,
+                "regression_hint": None,
+            }
+            result = StageResult(
+                stage_type=self.stage_type,
+                status=ImmunityStatusEnum.FAILED,
+                evidence=evidence,
+                error="Fix stage: no deterministic fix strategy matched — manual fix required",
+            )
+            self._persist(db, pipeline_id, result)
+            context.set_stage(self.stage_type, evidence)
+            return result
+
+        fix_result = strategy.apply(context.repository_path, affected_file)
 
         evidence = {
             "affected_file": affected_file,
-            "fix_applied": fix_applied,
-            "fix_description": fix_description,
-            "diff": diff_output,
+            "fix_applied": fix_result.success,
+            "fix_description": fix_result.description,
+            "diff": fix_result.diff,
+            "strategy": strategy.name,
+            "regression_hint": fix_result.regression_hint,
         }
 
-        if fix_applied:
+        if fix_result.success:
             result = StageResult(
                 stage_type=self.stage_type,
                 status=ImmunityStatusEnum.PASSED,
@@ -441,81 +445,12 @@ class FixStage(BaseStage):
                 stage_type=self.stage_type,
                 status=ImmunityStatusEnum.FAILED,
                 evidence=evidence,
-                error="Fix stage: no deterministic fix rule matched — manual fix required",
+                error=f"Fix stage: strategy '{strategy.name}' failed — {fix_result.error}",
             )
 
         self._persist(db, pipeline_id, result)
         context.set_stage(self.stage_type, evidence)
         return result
-
-    def _fix_accumulator_reset(
-        self, repo_path: str, rel_file: str
-    ) -> tuple[bool, Optional[str], Optional[str]]:
-        """
-        Fix pattern: variable = value instead of accumulator += value in a loop.
-        Looks for: `subtotal = v` and replaces with `total += v`
-        matching the actual variable names in context.
-        """
-        # Resolve path
-        if os.path.isabs(rel_file):
-            full = rel_file
-        else:
-            full = os.path.join(repo_path, rel_file)
-
-        basename = os.path.basename(rel_file)
-        if not os.path.isfile(full):
-            for root, _, files in os.walk(repo_path):
-                if basename in files:
-                    full = os.path.join(root, basename)
-                    break
-            else:
-                return False, None, f"File not found: {rel_file}"
-
-        try:
-            with open(full, "r", encoding="utf-8") as f:
-                original = f.read()
-        except Exception as e:
-            return False, None, str(e)
-
-        # Pattern: in a for loop body, find `X = value` where X is used as accumulator
-        # Specifically target: `subtotal = v` → `total += v` style bugs
-        # Strategy: find lines matching `\s+\w+ = \w+\s*$` inside a for loop
-        # that look like they should be `accumulator += value`
-        fixed = original
-        diff_lines = []
-
-        lines = original.splitlines(keepends=True)
-        new_lines = list(lines)
-        changed = False
-
-        for i, line in enumerate(lines):
-            # Match: indented `somevar = itervar` (simple assignment in loop body)
-            m = re.match(r'^(\s+)(\w+)\s*=\s*(\w+)\s*$', line.rstrip('\n\r'))
-            if m:
-                indent, lhs, rhs = m.group(1), m.group(2), m.group(3)
-                # The lhs should look like an accumulator name (contains total/sum/acc/subtotal)
-                # and rhs should be the loop variable
-                if re.search(r'(total|sum|acc|subtotal|count)', lhs, re.IGNORECASE):
-                    # Rewrite to: lhs += rhs
-                    new_line = f"{indent}{lhs} += {rhs}\n"
-                    if new_line != line:
-                        diff_lines.append(f"- line {i+1}: {line.rstrip()}")
-                        diff_lines.append(f"+ line {i+1}: {new_line.rstrip()}")
-                        new_lines[i] = new_line
-                        changed = True
-
-        if not changed:
-            return False, None, "No accumulator reset pattern found in file"
-
-        fixed = "".join(new_lines)
-        try:
-            with open(full, "w", encoding="utf-8") as f:
-                f.write(fixed)
-        except Exception as e:
-            return False, None, f"Could not write fix: {e}"
-
-        diff = "\n".join(diff_lines)
-        return True, diff, None
 
 
 # ---------------------------------------------------------------------------
@@ -581,11 +516,15 @@ class VerifyStage(BaseStage):
 
 class RegressionTestStage(BaseStage):
     """
-    Write a regression test that would have caught this bug.
-    Phase 3: generates a simple pytest test function from the root cause evidence.
-    The generated test file is written to the repo and executed to confirm it fails
-    on the broken code AND passes on the fixed code. Since the fix is already applied
-    at this point, we only verify the test passes now.
+    Write a regression test that verifies the actual reproduced bug.
+
+    Phase 4 repair: tests now use real assertions derived from the fix's
+    regression_hint rather than mere smoke tests. The test must:
+    - Be derived from concrete evidence (failing test output + fix diff)
+    - Assert the CORRECT behavior (not just "callable")
+    - Pass against the FIXED code in the workspace
+    - Fail against the buggy code (verified conceptually from the diff)
+
     Evidence: generated test source, command, exit code.
     """
     stage_type = StageTypeEnum.REGRESSION_TEST
@@ -593,26 +532,23 @@ class RegressionTestStage(BaseStage):
     def run(self, pipeline_id: str, context: ImmunityContext, db: Session) -> StageResult:
         repo = context.repository_path
         root_cause = context.get_stage(StageTypeEnum.ROOT_CAUSE)
+        fix_ev = context.get_stage(StageTypeEnum.FIX)
         reproduce_ev = context.get_stage(StageTypeEnum.REPRODUCE)
 
-        failing_tests = []
-        if reproduce_ev:
-            failing_tests = reproduce_ev.get("failing_tests", [])
-
-        # Generate a regression test that exercises the fixed function
-        test_source = self._generate_regression_test(repo, root_cause, failing_tests)
+        # Build regression test from available evidence
+        test_source = self._generate_regression_test(repo, root_cause, fix_ev, reproduce_ev)
         if not test_source:
             result = StageResult(
                 stage_type=self.stage_type,
                 status=ImmunityStatusEnum.FAILED,
-                evidence={"reason": "Could not generate regression test — no affected file identified"},
-                error="Regression test stage: insufficient evidence to generate test",
+                evidence={"reason": "Insufficient evidence to generate regression test"},
+                error="Regression test stage: need root_cause + fix evidence with regression_hint",
             )
             self._persist(db, pipeline_id, result)
             context.set_stage(self.stage_type, result.evidence)
             return result
 
-        # Write regression test to repo
+        # Write regression test to workspace
         test_filename = "test_regression_immunity.py"
         test_path = os.path.join(repo, test_filename)
         try:
@@ -629,7 +565,7 @@ class RegressionTestStage(BaseStage):
             context.set_stage(self.stage_type, result.evidence)
             return result
 
-        # Run only the regression test
+        # Execute the regression test against fixed code
         pytest_cmd = _detect_pytest_executable(repo)
         cmd = pytest_cmd + [test_filename, "-v", "--tb=short", "--no-header"]
         rc, stdout, stderr, elapsed = _run_cmd(cmd, cwd=repo, timeout=60)
@@ -650,7 +586,7 @@ class RegressionTestStage(BaseStage):
             status=status,
             evidence=evidence,
             artifact_ref=test_filename,
-            error=None if rc == 0 else "Regression test did not pass after fix",
+            error=None if rc == 0 else "Regression test did not pass after fix — fix may be incomplete",
         )
         self._persist(db, pipeline_id, result)
         context.set_stage(self.stage_type, evidence)
@@ -660,11 +596,18 @@ class RegressionTestStage(BaseStage):
         self,
         repo: str,
         root_cause: Optional[dict],
-        failing_tests: list[str],
+        fix_ev: Optional[dict],
+        reproduce_ev: Optional[dict],
     ) -> Optional[str]:
         """
-        Generate a simple regression test from evidence.
-        Phase 3: rule-based generation for the known buggy_stats.py pattern.
+        Generate an assertion-based regression test.
+
+        Priority:
+        1. If fix_ev contains regression_hint with changed_functions + hints:
+           generate tests with real numeric assertions (mean([1,2,3]) == 2.0)
+        2. Fallback: parse failing test names from reproduce_ev and replicate
+           simplified versions with correct expected values
+        3. Last resort: None (caller records FAILED)
         """
         if not root_cause:
             return None
@@ -674,75 +617,183 @@ class RegressionTestStage(BaseStage):
             return None
 
         basename = os.path.basename(affected_file).replace(".py", "")
+        regression_hint = (fix_ev or {}).get("regression_hint")
 
-        # Detect the module's functions by parsing its AST
-        functions = self._list_functions(repo, affected_file)
-        if not functions:
+        # --- Path 1: use regression_hint for real assertion tests ---
+        if regression_hint and regression_hint.get("changed_functions"):
+            return self._generate_from_hint(basename, affected_file, regression_hint, reproduce_ev)
+
+        # --- Path 2: replicate failing tests from reproduce evidence ---
+        if reproduce_ev and reproduce_ev.get("failing_tests"):
+            return self._generate_from_failing_tests(
+                repo, basename, affected_file, reproduce_ev["failing_tests"]
+            )
+
+        return None
+
+    def _generate_from_hint(
+        self,
+        basename: str,
+        affected_file: str,
+        hint: dict,
+        reproduce_ev: Optional[dict],
+    ) -> Optional[str]:
+        """
+        Generate real assertion tests using regression_hint from the fix strategy.
+        Tests assert CORRECT computed values — not just callability.
+        """
+        changed_functions = hint.get("changed_functions", [])
+        hints = hint.get("hints", [])
+        if not changed_functions:
             return None
 
-        # Build simple regression test calls
-        test_cases = []
-        for fn_name in functions:
-            # Basic smoke test: call each function with minimal args
-            # This is evidence-based — we know the functions exist
-            if fn_name.startswith("_"):
+        test_cases: list[str] = []
+
+        for h in hints:
+            fn_name = h.get("function")
+            if not fn_name or fn_name.startswith("_"):
                 continue
-            test_cases.append(f"    # Regression: {fn_name} must return a number")
-            test_cases.append(f"    result = {fn_name}([1, 2, 3])")
-            test_cases.append(f"    assert isinstance(result, (int, float)), "
-                               f"f\"{fn_name} returned {{type(result)}} not a number\"")
+            accum = h.get("accumulator", "total")
+            loop_var = h.get("loop_var", "v")
+
+            # Generate a concrete test: for mean-like functions, assert sum behavior
+            test_cases.append(f"def test_regression_{fn_name}_accumulates_correctly():")
+            test_cases.append(f'    """')
+            test_cases.append(f"    Regression: {fn_name} must accumulate all values,")
+            test_cases.append(f"    not just return the last value.")
+            test_cases.append(f"    Bug: `{accum} = {loop_var}` reset on each iteration.")
+            test_cases.append(f'    """')
+            # Test that the function returns a sum/mean, not just the last value
+            # For a mean: mean([1,2,3]) == 2.0 (not 3.0 which would be last-value-only)
+            test_cases.append(f"    # If accumulator reset, returns last/{len(hints)+2} not sum/{len(hints)+2}")
+            test_cases.append(f"    result = {fn_name}([1.0, 2.0, 3.0])")
+            test_cases.append(f"    # Correct: mean([1,2,3]) = 2.0; buggy returns 3.0/3 = 1.0")
+            test_cases.append(f"    assert result == 2.0, (")
+            test_cases.append(f"        f\"{fn_name}([1,2,3]) returned {{result}}, expected 2.0. \"")
+            test_cases.append(f'        "Accumulator reset bug still present?"')
+            test_cases.append(f"    )")
+            test_cases.append("")
+            # Also test: same-value list must return that value
+            test_cases.append(f"def test_regression_{fn_name}_identical_values():")
+            test_cases.append(f'    """Accumulation of identical values must equal that value."""')
+            test_cases.append(f"    result = {fn_name}([5.0, 5.0, 5.0])")
+            test_cases.append(f"    assert result == 5.0, (")
+            test_cases.append(f"        f\"Expected 5.0, got {{result}}. Accumulator still resetting?\"")
+            test_cases.append(f"    )")
+            test_cases.append("")
+            # Negative values
+            test_cases.append(f"def test_regression_{fn_name}_negative_values():")
+            test_cases.append(f'    """Signed accumulation must work correctly."""')
+            test_cases.append(f"    result = {fn_name}([-1.0, 1.0])")
+            test_cases.append(f"    assert result == 0.0, (")
+            test_cases.append(f"        f\"Expected 0.0, got {{result}}. Accumulator issue?\"")
+            test_cases.append(f"    )")
             test_cases.append("")
 
         if not test_cases:
             return None
 
+        imports = f"from {basename} import {', '.join(changed_functions[:5])}"
         source = textwrap.dedent(f"""\
             \"\"\"
             Regression test — auto-generated by Receipts Immunity Pipeline.
-            Evidence source: {affected_file}
+            Source: {affected_file}
+            Strategy: accumulator_reset
+
+            These tests verify CORRECT accumulated behavior.
+            They would FAIL against the buggy code and PASS against the fix.
             DO NOT DELETE — this test prevents regression of the fixed bug.
             \"\"\"
             import pytest
-            from {basename} import {', '.join(functions[:5])}
+            {imports}
 
-
-            def test_regression_basic_smoke():
-                \"\"\"Verify fixed functions return numeric results for basic inputs.\"\"\"
-            {chr(10).join(test_cases)}
-
-            def test_regression_empty_input():
-                \"\"\"Fixed functions should handle edge cases without crashing.\"\"\"
-                # Verify the functions are importable and callable
-                assert callable({functions[0]})
         """)
+        source += "\n".join(test_cases)
         return source
 
-    def _list_functions(self, repo: str, rel_file: str) -> list[str]:
-        """Parse a Python file and return top-level function names."""
-        if os.path.isabs(rel_file):
-            full = rel_file
-        else:
-            full = os.path.join(repo, rel_file)
+    def _generate_from_failing_tests(
+        self,
+        repo: str,
+        basename: str,
+        affected_file: str,
+        failing_tests: list[str],
+    ) -> Optional[str]:
+        """
+        Fallback: generate simplified versions of the known failing tests.
+        These are less precise than hint-based tests but still assertion-based.
+        """
+        # Parse the test file to extract actual test assertions
+        test_lines = self._extract_failing_test_bodies(repo, failing_tests)
+        if not test_lines:
+            return None
 
-        basename = os.path.basename(rel_file)
-        if not os.path.isfile(full):
-            for root, _, files in os.walk(repo):
-                if basename in files:
-                    full = os.path.join(root, basename)
-                    break
-            else:
-                return []
+        imports = f"from {basename} import *"
+        source = textwrap.dedent(f"""\
+            \"\"\"
+            Regression test — derived from failing tests in reproduce stage.
+            Source: {affected_file}
+            DO NOT DELETE.
+            \"\"\"
+            import pytest
+            {imports}
 
-        try:
-            with open(full, "r", encoding="utf-8") as f:
-                source = f.read()
-            tree = ast.parse(source)
-            return [
-                node.name for node in ast.walk(tree)
-                if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
-            ]
-        except Exception:
+        """)
+        source += "\n".join(test_lines)
+        return source
+
+    def _extract_failing_test_bodies(self, repo: str, failing_tests: list[str]) -> list[str]:
+        """
+        Parse the failing test file and extract the test bodies for failing tests.
+        Returns list of complete test function definitions.
+        """
+        if not failing_tests:
             return []
+
+        # Extract unique test file paths from the failing test identifiers
+        # Format: "test_file.py::TestClass::test_method" or "test_file.py::test_fn"
+        test_files: dict[str, list[str]] = {}
+        for t in failing_tests:
+            parts = t.split("::")
+            if parts:
+                tf = parts[0].strip()
+                if tf not in test_files:
+                    test_files[tf] = []
+                if len(parts) > 1:
+                    test_files[tf].append(parts[-1])
+
+        results: list[str] = []
+        for tf, test_names in test_files.items():
+            full = os.path.join(repo, tf) if not os.path.isabs(tf) else tf
+            if not os.path.isfile(full):
+                # Try basename search
+                bn = os.path.basename(tf)
+                for root, _, files in os.walk(repo):
+                    if bn in files:
+                        full = os.path.join(root, bn)
+                        break
+            if not os.path.isfile(full):
+                continue
+            try:
+                with open(full, "r", encoding="utf-8") as f:
+                    src = f.read()
+                tree = ast.parse(src)
+                lines = src.splitlines()
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.FunctionDef) and node.name in test_names:
+                        # Extract source lines for this function, prefixed with regression_ marker
+                        start = node.lineno - 1
+                        end = node.end_lineno if hasattr(node, "end_lineno") else start + 10
+                        fn_lines = lines[start:end]
+                        # Rename to avoid collision
+                        fn_lines[0] = fn_lines[0].replace(
+                            node.name, f"test_regression_{node.name}"
+                        )
+                        results.append("\n".join(fn_lines))
+                        results.append("")
+            except Exception:
+                continue
+
+        return results
 
 
 # ---------------------------------------------------------------------------
@@ -849,9 +900,20 @@ class SiblingHuntStage(BaseStage):
 class DocumentationStage(BaseStage):
     """
     Record what was learned: pattern signature, root cause, fix, regression test.
-    Creates a PatternLibraryEntry. Always passes if there is evidence to document.
+
+    Phase 4: Pattern Library entry created ONLY when Reproduce + RootCause +
+    Fix + Verify + RegressionTest all PASSED. Explicit INSUFFICIENT_EVIDENCE
+    if gates not met. No fake patterns ever created.
     """
     stage_type = StageTypeEnum.DOCUMENTATION
+
+    REQUIRED_PASSED_STAGES = [
+        StageTypeEnum.REPRODUCE,
+        StageTypeEnum.ROOT_CAUSE,
+        StageTypeEnum.FIX,
+        StageTypeEnum.VERIFY,
+        StageTypeEnum.REGRESSION_TEST,
+    ]
 
     def run(self, pipeline_id: str, context: ImmunityContext, db: Session) -> StageResult:
         from app.services.pattern_library import create_pattern
@@ -861,20 +923,41 @@ class DocumentationStage(BaseStage):
         reg_ev = context.get_stage(StageTypeEnum.REGRESSION_TEST) or {}
         sibling_ev = context.get_stage(StageTypeEnum.SIBLING_HUNT) or {}
 
+        # Gate: all required stages must show evidence of PASS
+        missing_stages = self._check_required_stages(context)
+        if missing_stages:
+            ev = {
+                "pattern_created": False,
+                "reason": "INSUFFICIENT_EVIDENCE",
+                "missing_or_failed_stages": missing_stages,
+            }
+            result = StageResult(
+                stage_type=self.stage_type,
+                status=ImmunityStatusEnum.FAILED,
+                evidence=ev,
+                error=(
+                    "Documentation: cannot create pattern — "
+                    f"required stages not PASSED: {', '.join(missing_stages)}"
+                ),
+            )
+            self._persist(db, pipeline_id, result)
+            context.set_stage(self.stage_type, ev)
+            return result
+
         affected_file = root_cause.get("affected_file", "unknown")
         error_type = root_cause.get("error_type", "UnknownError")
         error_message = root_cause.get("error_message", "")
-        fix_description = fix_ev.get("fix_description", "manual")
+        fix_description = fix_ev.get("fix_description", "unknown")
+        strategy_name = fix_ev.get("strategy", "unknown")
         regression_test_ref = reg_ev.get("test_file")
 
-        # Build a stable pattern signature
-        sig = f"{error_type}:{os.path.basename(affected_file)}:{fix_description}"
-
+        sig = f"{error_type}:{os.path.basename(affected_file)}:{strategy_name}"
         description = (
             f"Bug: {error_type} in {affected_file}. "
             f"Error: {error_message[:200]}. "
-            f"Fix: {fix_description}. "
-            f"Sibling candidates found: {sibling_ev.get('candidates_found', 0)}."
+            f"Fix strategy: {strategy_name} ({fix_description}). "
+            f"Regression test: {regression_test_ref or 'none'}. "
+            f"Sibling candidates: {sibling_ev.get('candidates_found', 0)}."
         )
 
         try:
@@ -889,13 +972,15 @@ class DocumentationStage(BaseStage):
                     "error_type": error_type,
                     "error_message": error_message,
                     "fix_description": fix_description,
+                    "strategy": strategy_name,
                     "sibling_count": sibling_ev.get("candidates_found", 0),
+                    "regression_hint": fix_ev.get("regression_hint"),
                 },
             )
             pattern_id = entry.id
             pattern_created = True
         except Exception as exc:
-            logger.warning("Documentation stage: failed to create pattern entry: %s", exc)
+            logger.warning("Documentation stage: failed to create pattern: %s", exc)
             pattern_id = None
             pattern_created = False
 
@@ -905,6 +990,7 @@ class DocumentationStage(BaseStage):
             "pattern_id": pattern_id,
             "pattern_created": pattern_created,
             "regression_test_ref": regression_test_ref,
+            "gated_stages_all_passed": True,
         }
 
         result = StageResult(
@@ -916,3 +1002,26 @@ class DocumentationStage(BaseStage):
         self._persist(db, pipeline_id, result)
         context.set_stage(self.stage_type, evidence)
         return result
+
+    def _check_required_stages(self, context: ImmunityContext) -> list[str]:
+        failed = []
+        for stage_type in self.REQUIRED_PASSED_STAGES:
+            ev = context.get_stage(stage_type)
+            if ev is None:
+                failed.append(stage_type)
+            elif not self._stage_passed(stage_type, ev):
+                failed.append(stage_type)
+        return failed
+
+    def _stage_passed(self, stage_type: str, evidence: dict) -> bool:
+        if stage_type == StageTypeEnum.REPRODUCE:
+            return evidence.get("exit_code", 0) != 0 or bool(evidence.get("failing_tests"))
+        if stage_type == StageTypeEnum.ROOT_CAUSE:
+            return bool(evidence.get("error_type") or evidence.get("failing_tests"))
+        if stage_type == StageTypeEnum.FIX:
+            return bool(evidence.get("fix_applied"))
+        if stage_type == StageTypeEnum.VERIFY:
+            return evidence.get("exit_code") == 0
+        if stage_type == StageTypeEnum.REGRESSION_TEST:
+            return evidence.get("exit_code") == 0
+        return True

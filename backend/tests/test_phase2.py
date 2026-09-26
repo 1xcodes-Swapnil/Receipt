@@ -43,7 +43,7 @@ engine = create_engine(
 TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def override_get_db():
+def _override_get_db():
     import app.models  # noqa
     Base.metadata.create_all(bind=engine)
     db = TestingSession()
@@ -52,8 +52,6 @@ def override_get_db():
     finally:
         db.close()
 
-
-fastapi_app.dependency_overrides[get_db] = override_get_db
 
 DEMO_REPO = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "demo", "repository")
@@ -65,26 +63,37 @@ import app.orchestration.orchestrator as _orch  # noqa: E402
 
 
 @pytest.fixture(scope="module", autouse=True)
-def patch_orch_session():
-    """Patch orchestrator's SessionLocal for the duration of this module's tests."""
-    original = _orch.SessionLocal
-    _orch.SessionLocal = TestingSession  # type: ignore[attr-defined]
-    yield
-    _orch.SessionLocal = original
-
-
-@pytest.fixture(scope="module")
-def client(patch_orch_session):
+def patch_module_globals():
+    """
+    Scope all global patches to this module's test run only.
+    Restores FastAPI dependency overrides and orchestrator SessionLocal after
+    all tests in this module complete, preventing cross-module contamination.
+    """
     import app.models  # noqa
     Base.metadata.create_all(bind=engine)
-    with TestClient(fastapi_app) as c:
-        yield c
-    # Dispose engine connections before removing the file (Windows file lock)
+
+    prev_override = fastapi_app.dependency_overrides.get(get_db)
+    fastapi_app.dependency_overrides[get_db] = _override_get_db
+    prev_session = _orch.SessionLocal
+    _orch.SessionLocal = TestingSession  # type: ignore[attr-defined]
+    yield
+    # Teardown
+    if prev_override is None:
+        fastapi_app.dependency_overrides.pop(get_db, None)
+    else:
+        fastapi_app.dependency_overrides[get_db] = prev_override
+    _orch.SessionLocal = prev_session
     engine.dispose()
     try:
         os.remove(_TEST_DB_FILE)
     except OSError:
         pass  # Windows may still hold a lock; file is harmless
+
+
+@pytest.fixture(scope="module")
+def client(patch_module_globals):
+    with TestClient(fastapi_app) as c:
+        yield c
 
 
 # ===========================================================================
