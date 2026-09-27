@@ -18,6 +18,9 @@ Every bug finding produces a **receipt** — a cryptographically-auditable recor
 When evidence is missing, the system returns `ESCALATE`. It never guesses `SAFE`.
 
 ---
+## Live Demo Link
+
+ https://fluffy-seahorse-fab8ba.netlify.app/
 
 ## Quick Start
 
@@ -97,7 +100,7 @@ See [AGENTS.md](AGENTS.md) for the full invariant list.
 
 ---
 
-## Phase 6 Advanced Strategies
+## Advanced Strategies
 
 When the base strategy set leaves an evidence gap, the planner may select:
 
@@ -128,7 +131,7 @@ These are demo results on purpose-built repositories, not a real-world benchmark
 
 ---
 
-## Test Results (Phase 8)
+## Test Results 
 
 ```bash
 cd backend
