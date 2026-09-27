@@ -1,0 +1,402 @@
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>IBM Bob Usage Summary — Receipts Project</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #1f2328;
+    background: #ffffff;
+    padding: 32px 16px 48px;
+  }
+  .page { max-width: 760px; margin: 0 auto; }
+
+  /* Header */
+  .header { border-bottom: 2px solid #e5e7eb; padding-bottom: 20px; margin-bottom: 28px; }
+  .header h1 { font-size: 22px; font-weight: 700; color: #1f2328; margin-bottom: 4px; }
+  .header .subtitle { font-size: 13px; color: #57606a; }
+  .header .tagline {
+    display: inline-block;
+    margin-top: 10px;
+    background: #1f2328;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 3px;
+    letter-spacing: 0.04em;
+  }
+
+  /* Section */
+  h2 { font-size: 15px; font-weight: 700; color: #1f2328; margin: 28px 0 12px; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; }
+  h3 { font-size: 13px; font-weight: 600; color: #1f2328; margin: 18px 0 8px; }
+
+  /* Stats row */
+  .stats-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .stat-card {
+    flex: 1 1 130px;
+    background: #f7f8fa;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 14px 16px;
+    text-align: center;
+  }
+  .stat-card .value { font-size: 26px; font-weight: 700; color: #3b82d4; line-height: 1.2; }
+  .stat-card .label { font-size: 11px; color: #57606a; margin-top: 3px; }
+
+  /* Team grid */
+  .team-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 8px; }
+  .team-card {
+    background: #f7f8fa;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 14px 16px;
+  }
+  .team-card .name { font-weight: 700; font-size: 13px; color: #1f2328; margin-bottom: 4px; }
+  .team-card .phase-badge {
+    display: inline-block;
+    background: #3b82d4;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 10px;
+    margin-bottom: 8px;
+  }
+  .team-card ul { list-style: none; padding: 0; }
+  .team-card ul li { font-size: 12px; color: #57606a; padding: 2px 0; }
+  .team-card ul li::before { content: "→ "; color: #3b82d4; font-weight: 700; }
+
+  /* Phase table */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-bottom: 8px; }
+  thead tr { background: #f7f8fa; }
+  th { text-align: left; padding: 8px 10px; border-bottom: 2px solid #e5e7eb; font-weight: 600; color: #1f2328; font-size: 12px; }
+  td { padding: 7px 10px; border-bottom: 1px solid #e5e7eb; color: #1f2328; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 10px;
+  }
+  .badge-pass { background: #dcfce7; color: #166534; }
+  .badge-blue { background: #dbeafe; color: #1d4ed8; }
+  .badge-purple { background: #ede9fe; color: #5b21b6; }
+
+  /* Invariants */
+  .invariant-list { list-style: none; padding: 0; }
+  .invariant-list li {
+    padding: 8px 12px;
+    border-left: 3px solid #3b82d4;
+    background: #f7f8fa;
+    margin-bottom: 7px;
+    border-radius: 0 4px 4px 0;
+    font-size: 12.5px;
+  }
+  .invariant-list li strong { color: #1f2328; }
+
+  /* Demo results */
+  .demo-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .demo-item {
+    flex: 1 1 160px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 10px 14px;
+    background: #f7f8fa;
+  }
+  .demo-item .dk { font-size: 11px; color: #57606a; margin-bottom: 2px; }
+  .demo-item .dv { font-size: 13px; font-weight: 700; color: #1f2328; }
+
+  /* What Bob did not do */
+  .nope-list { list-style: none; padding: 0; }
+  .nope-list li {
+    padding: 7px 12px;
+    border-left: 3px solid #7c5cd8;
+    background: #faf5ff;
+    margin-bottom: 7px;
+    border-radius: 0 4px 4px 0;
+    font-size: 12.5px;
+    color: #1f2328;
+  }
+
+  /* Footer */
+  .footer {
+    margin-top: 40px;
+    padding-top: 14px;
+    border-top: 1px solid #e5e7eb;
+    text-align: center;
+    font-size: 12px;
+    color: #57606a;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div class="subtitle">IBM Bob Hackathon — Team Usage Report</div>
+    <h1>Receipts: Evidence-First AI Code Review &amp; Bug Immunity</h1>
+    <div class="tagline">NO EVIDENCE, NO FLAG.</div>
+  </div>
+
+  
+  <h2>Project at a Glance</h2>
+  <div class="stats-row">
+    <div class="stat-card"><div class="value">8</div><div class="label">Phases Completed</div></div>
+    <div class="stat-card"><div class="value">371</div><div class="label">Tests Passing</div></div>
+    <div class="stat-card"><div class="value">14</div><div class="label">Evidence Strategies</div></div>
+    <div class="stat-card"><div class="value">8</div><div class="label">Immunity Stages</div></div>
+    <div class="stat-card"><div class="value">4</div><div class="label">Team Members</div></div>
+    <div class="stat-card"><div class="value">217+</div><div class="label">Tests Written by Bob</div></div>
+  </div>
+
+  
+  <h2>Team — How Each Member Used IBM Bob</h2>
+  <div class="team-grid">
+
+    <div class="team-card">
+      <div class="name">Astha</div>
+      <div class="phase-badge">Phase 1 · Foundation</div>
+      <ul>
+        <li>Scaffolded entire project architecture with Bob</li>
+        <li>Defined session: <em>RECEIPTS — Phase 1: Foundation</em></li>
+        <li>Built React → FastAPI → SQLite → ReviewOrchestrator pipeline</li>
+        <li>Bob generated core models, DB schema, and Test Runner</li>
+        <li>Stack: React, TypeScript, Vite, Tailwind, FastAPI, SQLAlchemy</li>
+        <li>Bob context: 96.31k tokens, session task active</li>
+      </ul>
+    </div>
+
+    <div class="team-card">
+      <div class="name">Sagar</div>
+      <div class="phase-badge">Phase 6 · Advanced Testing &amp; Fault Analysis</div>
+      <ul>
+        <li>Used Bob to implement 7 advanced testing strategies</li>
+        <li>Phase 6 task: <em>PropertyBasedTesting</em>, <em>MutationTesting</em>, <em>FaultLocalization</em></li>
+        <li>Bob executed pytest runs, read GitHub provider code, fixed routing tests</li>
+        <li>27 files changed in session; Bob ran live terminal commands</li>
+        <li>Staged 10 changes, committed 5 merge changes via Bob</li>
+        <li>Bob context: 55.52k tokens used, 270k budget</li>
+      </ul>
+    </div>
+
+    <div class="team-card">
+      <div class="name">Swapnil</div>
+      <div class="phase-badge">Phase 7–8 · V7 Immunity &amp; Canonicalization</div>
+      <ul>
+        <li>Used Bob to generate a full project task summary artifact</li>
+        <li>Bob explored 3 folders, 5 files to auto-generate one-pager</li>
+        <li>Summary covered: 8 phases, 371 tests, 14 strategies, 8 immunity stages</li>
+        <li>Bob produced: <em>catch_rate=1.0, false_alarm_rate=0.0, 21 audit events</em></li>
+        <li>Confirmed all 13 architectural decisions documented</li>
+        <li>Bob context: 0.292k tokens for summary generation</li>
+      </ul>
+    </div>
+
+    <div class="team-card">
+      <div class="name">Vaishnavi</div>
+      <div class="phase-badge">Phase 5–6 · Hardening &amp; Documentation Check</div>
+      <ul>
+        <li>Used Bob to harden DocumentationCheckAgent behaviour</li>
+        <li>Task: fix <code>_check_readme()</code> — return INSUFFICIENT_EVIDENCE vs FAIL</li>
+        <li>Bob read agent code, planned 5-step fix, authored new test</li>
+        <li>Git cherry-pick conflict resolved via Bob guidance in terminal</li>
+        <li>Bob ran uvicorn server, diagnosed asyncio subprocess traceback</li>
+        <li>Bob context: 37.99k tokens, 270k budget; 27 files changed</li>
+      </ul>
+    </div>
+
+  </div>
+
+  
+  <h2>All 8 Phases — What IBM Bob Built</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Phase</th>
+        <th>Description</th>
+        <th>Bob's Key Output</th>
+        <th>Tests</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Phase 1</strong></td>
+        <td>Foundation — Evidence Receipt, DB, FastAPI</td>
+        <td>Core models, routes, TestRunner agent</td>
+        <td>—</td>
+        <td><span class="badge badge-pass">✅ Complete</span></td>
+      </tr>
+      <tr>
+        <td><strong>Phase 2</strong></td>
+        <td>4 Agents, SSE events, parallel orchestration</td>
+        <td>ReviewOrchestrator, 4 agent handlers</td>
+        <td>22</td>
+        <td><span class="badge badge-pass">✅ Complete</span></td>
+      </tr>
+      <tr>
+        <td><strong>Phase 3</strong></td>
+        <td>Bug-to-Immunity pipeline (7 stages)</td>
+        <td>ImmunityOrchestrator, 7 stage handlers</td>
+        <td>18</td>
+        <td><span class="badge badge-pass">✅ Complete</span></td>
+      </tr>
+      <tr>
+        <td><strong>Phase 4</strong></td>
+        <td>Replay engine, ground-truth benchmark</td>
+        <td>ReplayEngine, 6 demo cases</td>
+        <td>24</td>
+        <td><span class="badge badge-pass">✅ Complete</span></td>
+      </tr>
+      <tr>
+        <td><strong>Phase 5</strong></td>
+        <td>Hardening — workspace isolation, audit chain</td>
+        <td>SHA-256 hash chain, concurrency lock</td>
+        <td>43</td>
+        <td><span class="badge badge-pass">✅ Complete</span></td>
+      </tr>
+      <tr>
+        <td><strong>Phase 6</strong></td>
+        <td>Adaptive evidence architecture</td>
+        <td>EvidenceLedger, StrategyPlanner, 14 strategies</td>
+        <td>31</td>
+        <td><span class="badge badge-pass">✅ Complete</span></td>
+      </tr>
+      <tr>
+        <td><strong>Phase 6+</strong></td>
+        <td>Advanced testing strategies</td>
+        <td>7 advanced strategies + BoundedExecutionContext</td>
+        <td>72</td>
+        <td><span class="badge badge-pass">✅ Complete</span></td>
+      </tr>
+      <tr>
+        <td><strong>Phase 7</strong></td>
+        <td>V7 immunity with state machine</td>
+        <td>PipelineStateMachine, HypothesisTracker, 8 stages</td>
+        <td>71</td>
+        <td><span class="badge badge-pass">✅ Complete</span></td>
+      </tr>
+      <tr>
+        <td><strong>Phase 8</strong></td>
+        <td>GitHub integration, demo runner, docs</td>
+        <td>GitHubProvider, demo/run_demo.py, 21 doc files</td>
+        <td>—</td>
+        <td><span class="badge badge-pass">✅ Complete</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  
+  <h2>System Architecture (Bob-Built)</h2>
+  <table>
+    <thead>
+      <tr><th>Layer</th><th>Component</th><th>File</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Orchestration</td><td>ReviewOrchestrator (4 parallel agents)</td><td><code>orchestration/orchestrator.py</code></td></tr>
+      <tr><td>Agents</td><td>TestRunner, CatchingTest, DocCheck, HistoryCheck</td><td><code>agents/</code></td></tr>
+      <tr><td>Evidence</td><td>EvidenceLedger, Claim, Sufficiency Evaluator</td><td><code>evidence/</code></td></tr>
+      <tr><td>Strategies</td><td>14 strategies (7 base + 7 advanced Phase 6)</td><td><code>strategies/</code></td></tr>
+      <tr><td>Planner</td><td>Adaptive planner with gap-gating</td><td><code>planner/planner.py</code></td></tr>
+      <tr><td>Immunity V7</td><td>8 evidence-gated stages</td><td><code>immunity/stages_v7.py</code></td></tr>
+      <tr><td>State Machine</td><td>PipelineStateMachine + HypothesisTracker</td><td><code>immunity/state_machine.py</code></td></tr>
+      <tr><td>Audit</td><td>SHA-256 cryptographic audit chain</td><td><code>audit/service.py</code></td></tr>
+      <tr><td>Replay</td><td>ReplayEngine with workspace isolation</td><td><code>replay/engine.py</code></td></tr>
+      <tr><td>Repository</td><td>LocalProvider + GitHubRepositoryProvider</td><td><code>repositories/provider.py</code></td></tr>
+    </tbody>
+  </table>
+
+  
+  <h2>Actual Demo Results</h2>
+  <div class="demo-row">
+    <div class="demo-item"><div class="dk">Review Verdict</div><div class="dv">BUG_DETECTED</div></div>
+    <div class="demo-item"><div class="dk">Confidence</div><div class="dv">1.0</div></div>
+    <div class="demo-item"><div class="dk">Catch Rate</div><div class="dv">1.0 (6/6)</div></div>
+    <div class="demo-item"><div class="dk">False Alarm Rate</div><div class="dv">0.0</div></div>
+    <div class="demo-item"><div class="dk">Replay Accuracy</div><div class="dv">1.0</div></div>
+    <div class="demo-item"><div class="dk">Audit Chain</div><div class="dv">Valid · 21 events</div></div>
+  </div>
+
+  
+  <h2>Core Invariants Bob Enforced</h2>
+  <ul class="invariant-list">
+    <li><strong>Evidence Before Findings</strong> — An agent must produce concrete, verifiable evidence before creating any finding. A receipt is only valid if it contains real command output, real test results, or real file references.</li>
+    <li><strong>Never Invent Test Results</strong> — Agents may not fabricate, simulate, or approximate test outcomes. Real stdout/stderr from a real process is required.</li>
+    <li><strong>Agent Failure → ESCALATE</strong> — If an agent errors, times out, or produces insufficient evidence, the verdict must be ESCALATE. Never converted to SAFE.</li>
+    <li><strong>Keep Agents Isolated</strong> — Each agent runs independently. Agents communicate only through structured receipts.</li>
+    <li><strong>Deterministic, Reproducible Execution</strong> — Commands must be reproducible given the same repository state. Every command is logged.</li>
+    <li><strong>Do Not Implement Future Phases Prematurely</strong> — Strict phase gating enforced throughout all 8 phases.</li>
+  </ul>
+
+  
+  <h2>What IBM Bob Did NOT Do (By Design)</h2>
+  <ul class="nope-list">
+    <li>❌ Never fabricated test output — all evidence comes from real <code>pytest</code> execution</li>
+    <li>❌ Never invented verdict results — ESCALATE when evidence is missing</li>
+    <li>❌ Never mocked execution — strategy results reflect actual analysis</li>
+    <li>❌ Never implemented future phases prematurely — strict phase gating respected</li>
+    <li>❌ Never converted an agent failure or missing evidence into a SAFE verdict</li>
+  </ul>
+
+  
+  <h2>Phase 6 Advanced Strategies (Bob-Implemented)</h2>
+  <table>
+    <thead>
+      <tr><th>Strategy</th><th>Cost</th><th>What it does</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>semantic_sibling_analysis</code></td><td>4</td><td>AST-based similar-code detection across codebase</td></tr>
+      <tr><td><code>fault_localization</code></td><td>5</td><td>Ochiai-coefficient suspicious file/function/line ranking</td></tr>
+      <tr><td><code>property_based_testing</code></td><td>6</td><td>Bounded property generation with reproducible seeds</td></tr>
+      <tr><td><code>metamorphic_testing</code></td><td>6</td><td>Input transformation + relation consistency check</td></tr>
+      <tr><td><code>fuzzing</code></td><td>6</td><td>Deterministic bounded input generation</td></tr>
+      <tr><td><code>mutation_testing</code></td><td>7</td><td>Mutant creation → KILLED / SURVIVED / INVALID classification</td></tr>
+      <tr><td><code>counterexample_shrinking</code></td><td>—</td><td>Minimize failing inputs (requires failing input seed)</td></tr>
+    </tbody>
+  </table>
+
+  
+  <h2>V7 Immunity Pipeline — 8 Evidence-Gated Stages</h2>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Stage</th><th>Gate Condition</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>Reproduce</td><td>Deterministic failure reproduction confirmed</td></tr>
+      <tr><td>2</td><td>Root Cause</td><td>Independent verification of hypothesis required</td></tr>
+      <tr><td>3</td><td>Fix</td><td>Patch applied and isolated in fresh workspace</td></tr>
+      <tr><td>4</td><td>Verify</td><td>All tests pass after fix; failures → retry</td></tr>
+      <tr><td>5</td><td>Regression Test</td><td>New test targeting exact failure path authored</td></tr>
+      <tr><td>6</td><td>Sibling Hunt</td><td>Similar patterns identified across codebase</td></tr>
+      <tr><td>7</td><td>Document</td><td>Finding, root cause, and fix recorded</td></tr>
+      <tr><td>8</td><td>Pattern</td><td>Entry registered in Pattern Library</td></tr>
+    </tbody>
+  </table>
+
+  
+  <h2>Why Receipts is Different</h2>
+  <table>
+    <thead>
+      <tr><th>Feature</th><th>Receipts</th><th>Typical AI Review</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Evidence before finding</td><td><span class="badge badge-pass">✅ Always</span></td><td>❌ Often speculative</td></tr>
+      <tr><td>Cryptographic audit chain</td><td><span class="badge badge-pass">✅ SHA-256</span></td><td>❌ None</td></tr>
+      <tr><td>Bug-to-Immunity pipeline</td><td><span class="badge badge-pass">✅ 8-stage automated</span></td><td>❌ None</td></tr>
+      <tr><td>Advanced testing strategies</td><td><span class="badge badge-pass">✅ 7 Phase-6</span></td><td>❌ None</td></tr>
+      <tr><td>Replay benchmark</td><td><span class="badge badge-pass">✅ Ground-truth scored</span></td><td>❌ None</td></tr>
+      <tr><td>Fail-closed on missing evidence</td><td><span class="badge badge-pass">✅ ESCALATE</span></td><td>❌ Guess</td></tr>
+    </tbody>
+  </table>
+
+  <div class="footer">Made with IBM Bob</div>
+</div>
+</body>
+</html>
