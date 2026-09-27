@@ -1,18 +1,25 @@
 """Application configuration via environment variables / .env file."""
 import os
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# backend/.env, resolved independently of the process working directory
+_BACKEND_ENV_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Later files take priority; real environment variables override both.
+        env_file=(".env", _BACKEND_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
     app_name: str = "Receipts API"
     app_version: str = "0.1.0"
+
+    # Kept out of os.environ so subprocesses running PR code never inherit it.
+    github_token: SecretStr = SecretStr("")
 
     # SQLite by default; swap for postgresql+psycopg2://... for PostgreSQL
     database_url: str = "sqlite:///./database/receipts.db"

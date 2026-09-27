@@ -36,7 +36,7 @@ export function Layout() {
   };
 
   const navItems = [
-    { to: '/', label: 'Dashboard', icon: Activity },
+    { to: '/dashboard', label: 'Dashboard', icon: Activity },
     { to: '/demo', label: 'Demo Execution', icon: Zap },
     { to: '/activity', label: 'PR Activity Logs', icon: FileText },
     { to: '/review', label: 'Trigger Review', icon: PlusCircle },
@@ -180,7 +180,7 @@ export function Layout() {
                 <div className="w-8 h-8 rounded-xl bg-brand-900 text-white flex items-center justify-center font-serif-title font-bold text-lg">
                   R
                 </div>
-                <span className="font-serif-title font-bold text-lg text-brand-950">Receipts.ai</span>
+                <span className="font-serif-title font-bold text-lg text-brand-950">Receipts</span>
               </div>
               <p className="text-xs text-brand-700 leading-relaxed">
                 Evidence-First AI Code Review & Bug Immunity system. Powered by cryptographic audit receipts and automated fix verification.
@@ -190,7 +190,7 @@ export function Layout() {
             <div>
               <h4 className="font-serif-title font-semibold text-sm text-brand-950 mb-3">Core Workflows</h4>
               <ul className="space-y-2 text-xs text-brand-800">
-                <li><NavLink to="/" className="hover:text-brand-950">Review Orchestrator & Metrics</NavLink></li>
+                <li><NavLink to="/dashboard" className="hover:text-brand-950">Review Orchestrator & Metrics</NavLink></li>
                 <li><NavLink to="/activity" className="hover:text-brand-950">PR Activity & Review Logs</NavLink></li>
                 <li><NavLink to="/immunity" className="hover:text-brand-950">Bug-to-Immunity V7 Pipeline</NavLink></li>
                 <li><NavLink to="/patterns" className="hover:text-brand-950">Pattern Library Catalog</NavLink></li>

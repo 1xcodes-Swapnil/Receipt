@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
+import Landing from './pages/Landing';
 import Dashboard from './pages/Dashboard';
 import PRReview from './pages/PRReview';
 import ReviewDetails from './pages/ReviewDetails';
@@ -15,7 +16,8 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route index element={<Dashboard />} />
+          <Route index element={<Landing />} />
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/demo" element={<DemoExecution />} />
           <Route path="/activity" element={<PRActivityLogs />} />
           <Route path="/review" element={<PRReview />} />

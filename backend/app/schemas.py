@@ -173,6 +173,7 @@ class AuditEventOut(BaseModel):
 
 class ReviewRequest(BaseModel):
     """Optional body for POST /repos/{repo}/prs/{number}/review."""
+    repo_name: Optional[str] = None
     pr_title: str = "PR Review"
     author: Optional[str] = None
     base_branch: str = "main"

@@ -78,6 +78,32 @@ html, body, #root {
   background: #94a3b8;
 }
 
+/* Landing: faint technical grid behind the hero */
+.bg-evidence-grid {
+  background-image:
+    linear-gradient(to right, rgba(19, 32, 39, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(19, 32, 39, 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 30% 35%, #000 30%, transparent 80%);
+  mask-image: radial-gradient(ellipse 70% 60% at 30% 35%, #000 30%, transparent 80%);
+}
+
+.bg-evidence-grid-dark {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 20%, transparent 75%);
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 20%, transparent 75%);
+}
+
+/* Landing: scalloped tear-off edge under the receipt ticket */
+.receipt-tear {
+  height: 12px;
+  background: radial-gradient(circle at 8px 12px, transparent 6.5px, #ffffff 7px) repeat-x;
+  background-size: 16px 12px;
+}
+
 /* Animations */
 @keyframes pulseGlow {
   0%, 100% { opacity: 0.8; transform: scale(1); }

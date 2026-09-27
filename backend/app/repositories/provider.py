@@ -438,33 +438,82 @@ class GitHubRepositoryProvider(RepositoryProvider):
         )
         return self._pr_info
 
+    def _git_auth_env(self) -> dict:
+        """Environment for git subprocesses that authenticates without persisting the token."""
+        import base64
+        basic = base64.b64encode(f"x-access-token:{self._token}".encode()).decode()
+        env = dict(os.environ)
+        env.update({
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+            "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}",
+        })
+        return env
+
     def _ensure_clone(self) -> str:
-        """Clone the repository to a temp dir if not already done."""
+        """Clone the repository to a temp dir and checkout PR ref if specified."""
         if self._local_clone and os.path.isdir(self._local_clone):
             return self._local_clone
 
         if not self._token:
             raise ProviderUnavailableError("GITHUB_TOKEN required for cloning")
 
-        clone_url = (
-            f"https://{self._token}@github.com/{self._owner}/{self._repo}.git"
-        )
+        # The token must not appear in the clone URL: git would persist it in
+        # .git/config, which is copied into workspaces where PR code executes.
+        clone_url = f"https://github.com/{self._owner}/{self._repo}.git"
+        git_env = self._git_auth_env()
         tmp = tempfile.mkdtemp(prefix="receipts_gh_clone_")
         try:
             result = subprocess.run(
-                ["git", "clone", "--depth=1", clone_url, tmp],
-                capture_output=True, text=True, timeout=120,
+                ["git", "clone", "--depth=50", clone_url, tmp],
+                capture_output=True, text=True, timeout=120, env=git_env,
             )
             if result.returncode != 0:
+                clean_stderr = result.stderr.replace(self._token, "[REDACTED]")
+                clean_stderr = clean_stderr.replace(git_env["GIT_CONFIG_VALUE_0"], "[REDACTED]")[:300]
                 shutil.rmtree(tmp, ignore_errors=True)
                 raise ProviderUnavailableError(
-                    f"git clone failed: {result.stderr[:200]}"
+                    f"git clone failed for '{self._owner}/{self._repo}': {clean_stderr}"
                 )
+
+            # If PR number is specified, checkout the PR branch/ref
+            if self._pr_number:
+                fetch_res = subprocess.run(
+                    ["git", "fetch", "--depth=50", "origin", f"pull/{self._pr_number}/head:pr-{self._pr_number}"],
+                    cwd=tmp, capture_output=True, text=True, timeout=60, env=git_env,
+                )
+                if fetch_res.returncode == 0:
+                    subprocess.run(
+                        ["git", "checkout", f"pr-{self._pr_number}"],
+                        cwd=tmp, capture_output=True, text=True, timeout=30,
+                    )
+                else:
+                    # Fallback to head_branch from PR info if direct pull ref fails
+                    try:
+                        pr_info = self._load_pr_info()
+                        if pr_info and pr_info.head_branch:
+                            subprocess.run(
+                                ["git", "fetch", "--depth=50", "origin", pr_info.head_branch],
+                                cwd=tmp, capture_output=True, text=True, timeout=60, env=git_env,
+                            )
+                            subprocess.run(
+                                ["git", "checkout", pr_info.head_branch],
+                                cwd=tmp, capture_output=True, text=True, timeout=30,
+                            )
+                    except Exception:
+                        pass
+
             self._local_clone = tmp
             return tmp
         except subprocess.TimeoutExpired:
             shutil.rmtree(tmp, ignore_errors=True)
             raise ProviderUnavailableError("git clone timed out after 120s")
+        except Exception as exc:
+            shutil.rmtree(tmp, ignore_errors=True)
+            if isinstance(exc, ProviderUnavailableError):
+                raise
+            raise ProviderUnavailableError(f"Failed to clone repository: {exc}") from exc
 
     @property
     def repo_path(self) -> str:

@@ -12,8 +12,18 @@ import {
   ArrowRight,
   PlusCircle,
   Play,
-  FileText
+  FileText,
+  X,
+  ExternalLink,
 } from 'lucide-react';
+
+function GithubIcon({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg className={className} fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
+    </svg>
+  );
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -24,6 +34,33 @@ export default function Dashboard() {
   const [prTitle, setPrTitle] = useState('Fix statistics mean function bug');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // GitHub Repo Selector Modal state
+  const [isGithubModalOpen, setIsGithubModalOpen] = useState(false);
+  const [githubUrlInput, setGithubUrlInput] = useState('');
+  const [githubInputError, setGithubInputError] = useState<string | null>(null);
+
+  const handleSelectGithubRepo = (repoPath: string) => {
+    let cleaned = repoPath.trim();
+    if (cleaned.startsWith('http://') || cleaned.startsWith('https://')) {
+      try {
+        const url = new URL(cleaned);
+        cleaned = url.pathname.replace(/^\//, '').replace(/\.git$/, '');
+      } catch {
+        // keep raw string
+      }
+    }
+
+    if (!cleaned) {
+      setGithubInputError('Please enter a valid GitHub repository name or URL');
+      return;
+    }
+
+    setRepoName(cleaned);
+    setIsGithubModalOpen(false);
+    setGithubUrlInput('');
+    setGithubInputError(null);
+  };
 
   // System stats state for metrics analytics
   const [replayCases, setReplayCases] = useState<ReplayCase[]>([]);
@@ -142,37 +179,62 @@ export default function Dashboard() {
               </div>
             )}
 
-            <form onSubmit={handleQuickTrigger} className="space-y-3.5">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-semibold text-brand-800 uppercase tracking-wider mb-1">
+            <form onSubmit={handleQuickTrigger} className="space-y-4">
+              {/* Repository Name Field & Add from GitHub Button */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+                  <label className="block text-[11px] font-semibold text-brand-800 uppercase tracking-wider">
                     Repository Name
                   </label>
+                  {repoName !== 'demo_repo' && (
+                    <button
+                      type="button"
+                      onClick={() => setRepoName('demo_repo')}
+                      className="text-xs text-brand-600 hover:text-brand-950 underline font-medium cursor-pointer"
+                      title="Reset back to default demo_repo"
+                    >
+                      Reset to demo_repo
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
                   <input
                     type="text"
                     required
                     value={repoName}
                     onChange={(e) => setRepoName(e.target.value)}
-                    className="w-full px-3.5 py-2 text-xs bg-brand-50 border border-brand-200 rounded-xl text-brand-900 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:bg-white"
+                    className="flex-1 px-3.5 py-2.5 text-xs bg-brand-50 border border-brand-200 rounded-xl text-brand-900 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:bg-white font-mono min-w-0"
                   />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-brand-800 uppercase tracking-wider mb-1">
-                    PR Number
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min={1}
-                    value={prNumber}
-                    onChange={(e) => setPrNumber(e.target.value)}
-                    className="w-full px-3.5 py-2 text-xs bg-brand-50 border border-brand-200 rounded-xl text-brand-900 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:bg-white"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setIsGithubModalOpen(true)}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold text-brand-950 bg-white hover:bg-brand-100 border border-brand-300 hover:border-brand-400 rounded-xl shadow-2xs transition-all cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    <span className="text-brand-700 font-bold text-sm leading-none">+</span>
+                    <GithubIcon className="w-4 h-4 text-brand-900 shrink-0" />
+                    <span>Add from GitHub</span>
+                  </button>
                 </div>
               </div>
 
+              {/* PR Number Field */}
               <div>
-                <label className="block text-[11px] font-semibold text-brand-800 uppercase tracking-wider mb-1">
+                <label className="block text-[11px] font-semibold text-brand-800 uppercase tracking-wider mb-1.5">
+                  PR Number
+                </label>
+                <input
+                  type="number"
+                  required
+                  min={1}
+                  value={prNumber}
+                  onChange={(e) => setPrNumber(e.target.value)}
+                  className="w-full sm:w-1/3 px-3.5 py-2.5 text-xs bg-brand-50 border border-brand-200 rounded-xl text-brand-900 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:bg-white font-mono"
+                />
+              </div>
+
+              {/* PR Title / Description Field */}
+              <div>
+                <label className="block text-[11px] font-semibold text-brand-800 uppercase tracking-wider mb-1.5">
                   PR Title / Description
                 </label>
                 <input
@@ -180,7 +242,7 @@ export default function Dashboard() {
                   required
                   value={prTitle}
                   onChange={(e) => setPrTitle(e.target.value)}
-                  className="w-full px-3.5 py-2 text-xs bg-brand-50 border border-brand-200 rounded-xl text-brand-900 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:bg-white"
+                  className="w-full px-3.5 py-2.5 text-xs bg-brand-50 border border-brand-200 rounded-xl text-brand-900 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:bg-white"
                 />
               </div>
 
@@ -211,6 +273,123 @@ export default function Dashboard() {
         </div>
 
       </div>
+
+      {/* GitHub Repository Selector Modal */}
+      {isGithubModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-brand-950/60 backdrop-blur-sm animate-fade-in"
+          onClick={() => setIsGithubModalOpen(false)}
+        >
+          <div
+            className="card-white w-full max-w-lg space-y-5 shadow-2xl rounded-2xl border border-brand-200 p-6 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between border-b border-brand-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-brand-900 text-white flex items-center justify-center font-bold text-sm shadow-sm">
+                  <GithubIcon className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-serif-title font-bold text-lg text-brand-950">Select GitHub Repository</h3>
+                  <p className="text-brand-600 text-xs">Enter a GitHub repository URL or owner/repository path</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsGithubModalOpen(false)}
+                className="p-1.5 rounded-full hover:bg-brand-100 text-brand-500 hover:text-brand-950 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3.5">
+              <div>
+                <label className="block text-[11px] font-semibold text-brand-800 uppercase tracking-wider mb-1">
+                  GitHub Repository URL or Path
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="e.g. https://github.com/facebook/react or owner/repo"
+                    value={githubUrlInput}
+                    onChange={(e) => {
+                      setGithubUrlInput(e.target.value);
+                      setGithubInputError(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSelectGithubRepo(githubUrlInput);
+                      }
+                    }}
+                    className="flex-1 px-3.5 py-2 text-xs bg-brand-50 border border-brand-200 rounded-xl text-brand-900 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:bg-white font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleSelectGithubRepo(githubUrlInput)}
+                    className="btn-pill-primary text-xs shrink-0 px-4"
+                  >
+                    Select
+                  </button>
+                </div>
+                {githubInputError && (
+                  <p className="text-rose-600 text-xs mt-1 font-medium">{githubInputError}</p>
+                )}
+              </div>
+
+              {/* Quick Popular GitHub Repositories */}
+              <div className="space-y-1.5 pt-1">
+                <span className="text-[11px] font-medium text-brand-600 block">Popular GitHub Repositories:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    'facebook/react',
+                    'pallets/flask',
+                    'python/cpython',
+                    'vercel/next.js',
+                    'torvalds/linux',
+                  ].map((repo) => (
+                    <button
+                      key={repo}
+                      type="button"
+                      onClick={() => handleSelectGithubRepo(repo)}
+                      className="px-2.5 py-1 rounded-full bg-brand-50 hover:bg-brand-100 text-brand-900 border border-brand-200 text-xs font-mono font-medium transition-colors"
+                    >
+                      {repo}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Informational Notice regarding GitHub Backend Status */}
+              <div className="bg-brand-50 p-3 rounded-xl border border-brand-200 text-[11px] text-brand-700 leading-relaxed flex items-start gap-2">
+                <ExternalLink className="w-4 h-4 text-brand-500 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-brand-900">Backend Integration Status:</strong> Selecting a remote GitHub repository populates the field. Note: the current backend Review Orchestrator runs parallel agents locally against <code className="bg-brand-200 px-1 rounded font-mono text-[10px]">demo_repo</code>. Remote repository cloning & API integration require backend token setup.
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-brand-100">
+              <button
+                type="button"
+                onClick={() => setIsGithubModalOpen(false)}
+                className="btn-pill-secondary text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSelectGithubRepo('demo_repo')}
+                className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-brand-200 hover:bg-brand-300 text-brand-950 transition-colors"
+              >
+                Reset to demo_repo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Feature 1: Metrics & Analytics Section */}
       <MetricsAnalytics

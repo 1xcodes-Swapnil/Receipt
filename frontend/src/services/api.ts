@@ -57,9 +57,12 @@ export const api = {
 
   // Code Reviews
   createReview(repo: string, prNumber: number, body: ReviewRequest = {}): Promise<ReviewRun> {
-    return request<ReviewRun>(`/repos/${encodeURIComponent(repo)}/prs/${prNumber}/review`, {
+    const trimmedRepo = repo.trim();
+    const safePathRepo = trimmedRepo === 'demo_repo' ? 'demo_repo' : encodeURIComponent(trimmedRepo);
+    const payload = { repo_name: trimmedRepo, ...body };
+    return request<ReviewRun>(`/repos/${safePathRepo}/prs/${prNumber}/review`, {
       method: 'POST',
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     });
   },
 
