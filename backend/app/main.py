@@ -55,13 +55,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Allow the Vite dev server (port 5173) and any localhost origin
+# Allow the Vite dev server (port 5173), any localhost origin, and CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:3000",
+        *(o.strip().rstrip("/") for o in settings.cors_origins.split(",") if o.strip()),
     ],
     allow_credentials=True,
     allow_methods=["*"],

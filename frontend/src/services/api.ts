@@ -27,7 +27,8 @@ import type {
   StrategyTraceEntry,
 } from '../types';
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
+export const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
+const BASE_URL = API_BASE_URL;
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {

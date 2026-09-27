@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Kept out of os.environ so subprocesses running PR code never inherit it.
     github_token: SecretStr = SecretStr("")
 
+    # Comma-separated origins allowed in addition to localhost, e.g. the deployed frontend URL
+    cors_origins: str = ""
+
     # SQLite by default; swap for postgresql+psycopg2://... for PostgreSQL
     database_url: str = "sqlite:///./database/receipts.db"
     db_echo: bool = False

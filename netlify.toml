@@ -1,0 +1,15 @@
+# Frontend only. Set VITE_API_URL (the public backend URL) in Netlify's
+# environment variables; it is baked into the bundle at build time.
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Client-side routing: serve index.html for /dashboard, /review, etc.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

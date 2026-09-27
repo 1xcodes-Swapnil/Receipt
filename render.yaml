@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: receipts-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    # demo/repository is a nested git repo that GitHub doesn't carry, so it is
+    # restored from the committed bundle (history is needed by the review agents).
+    buildCommand: >-
+      pip install -r requirements.txt &&
+      (test -d ../demo/repository/.git || git clone ../demo/repository.bundle ../demo/repository)
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.11
+      # The Netlify site URL, e.g. https://your-site.netlify.app
+      - key: CORS_ORIGINS
+        sync: false
+      # Optional; only needed for reviewing GitHub PRs. Set it in the Render dashboard.
+      - key: GITHUB_TOKEN
+        sync: false

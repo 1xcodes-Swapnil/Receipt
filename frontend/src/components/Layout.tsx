@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { api } from '../services/api';
+import { api, API_BASE_URL } from '../services/api';
 import {
   ShieldCheck,
   Zap,
@@ -67,7 +67,7 @@ export function Layout() {
               {healthStatus ? `Backend Online (v${healthStatus.version})` : 'Backend Connecting...'}
             </span>
             <a
-              href="http://localhost:8000/docs"
+              href={`${API_BASE_URL}/docs`}
               target="_blank"
               rel="noreferrer"
               className="text-brand-800 hover:text-brand-950 flex items-center gap-1 font-semibold hover:underline"
@@ -202,7 +202,7 @@ export function Layout() {
               <h4 className="font-serif-title font-semibold text-sm text-brand-950 mb-3">Verification & Invariants</h4>
               <ul className="space-y-2 text-xs text-brand-800">
                 <li><NavLink to="/audit" className="hover:text-brand-950">Cryptographic SHA-256 Chain</NavLink></li>
-                <li><a href="http://localhost:8000/docs" target="_blank" rel="noreferrer" className="hover:text-brand-950">FastAPI OpenAPI Specification</a></li>
+                <li><a href={`${API_BASE_URL}/docs`} target="_blank" rel="noreferrer" className="hover:text-brand-950">FastAPI OpenAPI Specification</a></li>
                 <li><span className="text-brand-600">Executable Pytest Receipts</span></li>
               </ul>
             </div>
@@ -225,7 +225,7 @@ export function Layout() {
           <div className="pt-6 border-t border-brand-200/80 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-brand-600">
             <p>© {new Date().getFullYear()} Receipts — Evidence-First AI Code Review. All rights reserved.</p>
             <p className="flex items-center gap-1 font-mono text-[11px]">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> API Server: http://localhost:8000
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> API Server: {API_BASE_URL}
             </p>
           </div>
         </div>
