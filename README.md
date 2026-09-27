@@ -1,13 +1,13 @@
+
+<img width="1376" height="768" alt="Cover Image" src="https://github.com/user-attachments/assets/52dd5209-c890-4cd6-b36d-454c4161052a" />
+
+
 # Receipts — Evidence-First AI Code Review & Bug Immunity
-
 > **NO EVIDENCE, NO FLAG.** Every finding is backed by real, executable evidence — never AI speculation.
-
 Built with **IBM Bob**.
 
 ---
-
 ## What is Receipts?
-
 Receipts is a backend system that treats code review as an **evidence collection problem**, not a prediction problem.
 
 Every bug finding produces a **receipt** — a cryptographically-auditable record containing:
