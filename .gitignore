@@ -113,6 +113,7 @@ coverage/
 # =========================
 *.log
 logs/
+!demo/logs/latest/demo.log
 
 # =========================
 # Local Replay Data

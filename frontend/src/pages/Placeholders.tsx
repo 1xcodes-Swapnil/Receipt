@@ -1,6 +1,6 @@
 function Placeholder({ name }: { name: string }) {
   return (
-    <div className="max-w-4xl mx-auto px-6 py-12">
+    <div className="w-[96%] max-w-[1920px] mx-auto px-6 py-12">
       <h1 className="text-2xl font-semibold text-gray-900 mb-2">{name}</h1>
       <div className="card mt-6 border-dashed text-center py-16">
         <p className="text-muted text-sm">

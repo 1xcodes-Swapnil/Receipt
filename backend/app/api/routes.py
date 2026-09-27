@@ -83,7 +83,7 @@ def health():
 # ---------------------------------------------------------------------------
 
 @router.post(
-    "/repos/{repo}/prs/{number}/review",
+    "/repos/{repo:path}/prs/{number}/review",
     response_model=ReviewRunOut,
     status_code=201,
     tags=["reviews"],
@@ -95,30 +95,107 @@ def create_review(
     db: Session = Depends(get_db),
 ):
     """Trigger a review. Runs all four agents in parallel."""
-    # Security: validate repo name before it is used in path construction
-    from app.security import validate_repo_name
-    try:
-        repo = validate_repo_name(repo)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    import os
+    import shutil
+    from app.security import is_github_repo_reference, validate_repo_name, parse_github_repo_input
+    from app.repositories.provider import GitHubRepositoryProvider, ProviderUnavailableError
 
-    orchestrator = ReviewOrchestrator()
+    target_repo = (body.repo_name or repo).strip()
+
+    # Case 1: Local repository — demo/demo_repo or any registered repository name.
+    # Resolution (registered local_path, demo fallback) is handled by the orchestrator.
+    if not is_github_repo_reference(target_repo):
+        try:
+            validated_repo = validate_repo_name(target_repo)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        orchestrator = ReviewOrchestrator()
+        try:
+            run = orchestrator.run_review(
+                db=db,
+                repo_name=validated_repo,
+                pr_number=number,
+                pr_title=body.pr_title,
+                author=body.author,
+                base_branch=body.base_branch,
+                head_branch=body.head_branch,
+                commit_sha=body.commit_sha,
+            )
+            return ReviewRunOut.model_validate(run)
+        except Exception as exc:
+            logger.exception("Orchestrator failed for repo=%s pr=%d", target_repo, number)
+            raise HTTPException(status_code=500, detail=f"Review orchestration failed: {exc}") from exc
+
+    # Case 2: GitHub repository ("owner/repo" or https://github.com/owner/repo)
     try:
+        owner, repo_name = parse_github_repo_input(target_repo)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid repository specification: {exc}") from exc
+
+    token = settings.github_token.get_secret_value().strip()
+    if not token:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "GITHUB_TOKEN is not configured. "
+                "Add GITHUB_TOKEN=<personal access token with repo scope> to backend/.env "
+                "(see backend/.env.example) and restart the backend to run GitHub repository reviews."
+            ),
+        )
+
+    full_repo_name = f"{owner}/{repo_name}"
+    gh_provider = GitHubRepositoryProvider(owner=owner, repo=repo_name, pr_number=number, token=token)
+
+    pr_title = body.pr_title
+    author = body.author
+    base_branch = body.base_branch
+    head_branch = body.head_branch
+    commit_sha = body.commit_sha
+
+    try:
+        pr_info = gh_provider.get_pr_info()
+        if pr_info:
+            if body.pr_title == "PR Review" or not body.pr_title:
+                pr_title = pr_info.title or f"PR #{number}"
+            author = author or pr_info.author
+            base_branch = base_branch or pr_info.base_branch
+            head_branch = head_branch or pr_info.head_branch
+            commit_sha = commit_sha or pr_info.head_sha
+    except Exception as exc:
+        logger.warning("Could not fetch GitHub PR info for %s PR #%d: %s", full_repo_name, number, exc)
+
+    workspace = None
+    try:
+        workspace = gh_provider.create_workspace()
+    except ProviderUnavailableError as exc:
+        gh_provider.cleanup()
+        raise HTTPException(status_code=400, detail=f"GitHub repository acquisition failed: {exc}") from exc
+    except Exception as exc:
+        gh_provider.cleanup()
+        raise HTTPException(status_code=500, detail=f"Failed to clone GitHub repository '{full_repo_name}': {exc}") from exc
+
+    try:
+        orchestrator = ReviewOrchestrator()
         run = orchestrator.run_review(
             db=db,
-            repo_name=repo,
+            repo_name=full_repo_name,
             pr_number=number,
-            pr_title=body.pr_title,
-            author=body.author,
-            base_branch=body.base_branch,
-            head_branch=body.head_branch,
-            commit_sha=body.commit_sha,
+            pr_title=pr_title,
+            author=author,
+            base_branch=base_branch,
+            head_branch=head_branch,
+            commit_sha=commit_sha,
+            repository_path_override=workspace.path,
         )
+        return ReviewRunOut.model_validate(run)
     except Exception as exc:
-        logger.exception("Orchestrator failed for repo=%s pr=%d", repo, number)
+        logger.exception("Orchestrator failed for GitHub repo=%s pr=%d", full_repo_name, number)
         raise HTTPException(status_code=500, detail=f"Review orchestration failed: {exc}") from exc
-
-    return ReviewRunOut.model_validate(run)
+    finally:
+        if workspace and os.path.exists(workspace.path):
+            shutil.rmtree(os.path.dirname(workspace.path), ignore_errors=True)
+        gh_provider.cleanup()
 
 
 @router.get("/reviews/{run_id}", response_model=ReviewRunDetail, tags=["reviews"])
